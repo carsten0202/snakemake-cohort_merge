@@ -1,0 +1,134 @@
+$schema: https://json-schema.org/draft/2020-12/schema
+
+title: Cohort merge configuration
+description: Configuration for creating a merged super-cohort VCF.
+type: object
+additionalProperties: false
+
+required:
+  - super_cohort
+  - output_directory
+  - chromosomes
+  - input
+  - cohorts
+  - modules
+  - resources
+
+properties:
+  super_cohort:
+    type: string
+    minLength: 1
+    description: Name of the resulting super-cohort.
+
+  output_directory:
+    type: string
+    minLength: 1
+    description: Directory in which workflow outputs will be written.
+
+  chromosomes:
+    type: array
+    minItems: 1
+    uniqueItems: true
+    description: Canonical chromosome names used by the workflow.
+    items:
+      type: string
+      pattern: '^chr(?:[1-9]|1[0-9]|2[0-2]|X)$'
+
+  input:
+    type: object
+    additionalProperties: false
+    required:
+      - pattern
+    properties:
+      pattern:
+        $ref: '#/$defs/vcfPattern'
+
+  modules:
+    type: object
+    additionalProperties: false
+    required:
+      - bcftools
+    properties:
+      bcftools:
+        type: array
+        minItems: 1
+        uniqueItems: true
+        items:
+          type: string
+          minLength: 1
+
+  resources:
+    type: object
+    additionalProperties: false
+    required:
+      - index_vcf
+      - validate_variant_sets
+      - merge_chromosome
+      - concatenate_chromosomes
+    properties:
+      index_vcf:
+        $ref: '#/$defs/ruleResources'
+      validate_variant_sets:
+        $ref: '#/$defs/ruleResources'
+      merge_chromosome:
+        $ref: '#/$defs/ruleResources'
+      concatenate_chromosomes:
+        $ref: '#/$defs/ruleResources'
+
+  cohorts:
+    type: object
+    minProperties: 2
+    description: Cohorts contributing VCF files to the super-cohort.
+    propertyNames:
+      pattern: '^[A-Za-z0-9][A-Za-z0-9_.-]*$'
+    additionalProperties:
+      $ref: '#/$defs/cohort'
+
+$defs:
+  ruleResources:
+    type: object
+    additionalProperties: false
+    required:
+      - threads
+      - mem_mb
+    properties:
+      threads:
+        type: integer
+        minimum: 1
+      mem_mb:
+        type: integer
+        minimum: 1
+
+  vcfPattern:
+    type: string
+    minLength: 1
+    description: >
+      VCF filename pattern. The {chromosome} placeholder is replaced with
+      the cohort-specific chromosome name.
+    allOf:
+      - pattern: '[{]chromosome[}]'
+      - pattern: '[.]vcf[.]gz$'
+
+  cohort:
+    type: object
+    additionalProperties: false
+    required:
+      - directory
+    properties:
+      directory:
+        type: string
+        minLength: 1
+        description: Directory containing this cohort's chromosome VCFs.
+
+      pattern:
+        $ref: '#/$defs/vcfPattern'
+        description: Optional cohort-specific pattern overriding input.pattern.
+
+      chromosome_aliases:
+        type: object
+        additionalProperties: false
+        description: Mapping from canonical chromosomes to cohort filenames.
+        properties:
+          chrX:
+            type: string
+            const: chr23

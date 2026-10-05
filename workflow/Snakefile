@@ -1,6 +1,26 @@
-configfile: "config/config.yaml"
+from pathlib import Path
+
+from snakemake.utils import min_version, validate
+
+
+min_version("9.9.0")
+
+configfile: "config/defaults.yaml"
+
+validate(config, "schemas/config.schema.yaml")
+
+CHROMOSOMES = config["chromosomes"]
+COHORTS = list(config["cohorts"])
+SUPER_COHORT = config["super_cohort"]
+OUTPUT_DIRECTORY = str(Path(config["output_directory"]))
+
+FINAL_VCF = str(Path(OUTPUT_DIRECTORY) / f"{SUPER_COHORT}.vcf.gz")
 
 
 rule all:
     input:
-        []
+        FINAL_VCF,
+        f"{FINAL_VCF}.tbi",
+
+
+include: "rules/bcftools.smk"

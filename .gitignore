@@ -3,3 +3,7 @@
 .venv/
 __pycache__/
 *.py[cod]
+
+# Real super-cohort configurations contain deployment-specific paths.
+config/super_cohorts/*.yaml
+!config/super_cohorts/*.example.yaml

@@ -1,0 +1,12 @@
+super_cohort: Glostrup
+output_directory: /path/to/glostrup/output
+
+cohorts:
+  cohort_a:
+    directory: /path/to/cohort_a
+
+  cohort_b:
+    directory: /path/to/cohort_b
+    pattern: "{chromosome}.filtered.vcf.gz"
+    chromosome_aliases:
+      chrX: chr23
