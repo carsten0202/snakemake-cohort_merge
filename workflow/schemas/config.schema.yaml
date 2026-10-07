@@ -62,13 +62,16 @@ properties:
     additionalProperties: false
     required:
       - index_vcf
-      - validate_variant_sets
+      - intersect_variants
+      - summarize_intersection
       - merge_chromosome
       - concatenate_chromosomes
     properties:
       index_vcf:
         $ref: '#/$defs/ruleResources'
-      validate_variant_sets:
+      intersect_variants:
+        $ref: '#/$defs/ruleResources'
+      summarize_intersection:
         $ref: '#/$defs/ruleResources'
       merge_chromosome:
         $ref: '#/$defs/ruleResources'

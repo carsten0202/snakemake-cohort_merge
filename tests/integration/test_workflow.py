@@ -71,7 +71,7 @@ def compress_vcf(source, destination):
     )
 
 
-def build_test_project(root, mismatch=False):
+def build_test_project(root, mismatch=False, empty_intersection=False):
     cohort_a = root / "cohort_a"
     cohort_b = root / "cohort_b"
     output = root / "output"
@@ -84,13 +84,16 @@ def build_test_project(root, mismatch=False):
     chr1_b = cohort_b / "chr1.vcf"
     chr_x_b = cohort_b / "chrX.vcf"
 
+    chr1_a_records = [
+        (100, "rs1", "A", "G", ["0/1", "0/0"]),
+        (200, "rs2", "C", "T", ["1/1", "0/1"]),
+    ]
+    if mismatch:
+        chr1_a_records.append((300, "rs3", "G", "A", ["0/1", "0/0"]))
     write_vcf(
         chr1_a,
         "chr1",
-        [
-            (100, "rs1", "A", "G", ["0/1", "0/0"]),
-            (200, "rs2", "C", "T", ["1/1", "0/1"]),
-        ],
+        chr1_a_records,
         ["duplicate", "cohort_a_sample"],
     )
     write_vcf(
@@ -100,13 +103,14 @@ def build_test_project(root, mismatch=False):
         ["duplicate", "cohort_a_sample"],
     )
 
-    cohort_b_alt = "T" if mismatch else "G"
+    cohort_b_first_alt = "T" if mismatch or empty_intersection else "G"
+    cohort_b_second_alt = "G" if empty_intersection else "T"
     write_vcf(
         chr1_b,
         "chr1",
         [
-            (100, "rs1", "A", cohort_b_alt, ["0/0", "0/1"]),
-            (200, "rs2", "C", "T", ["0/1", "1/1"]),
+            (100, "rs1", "A", cohort_b_first_alt, ["0/0", "0/1"]),
+            (200, "rs2", "C", cohort_b_second_alt, ["0/1", "1/1"]),
         ],
         ["duplicate", "cohort_b_sample"],
     )
@@ -242,14 +246,30 @@ class WorkflowIntegrationTest(unittest.TestCase):
             ).stdout.splitlines()
             self.assertEqual(index_stats, ["chr1\t.\t2", "chrX\t.\t1"])
 
-            self.assertTrue(
-                (output / "qc" / "variant_sets" / "chr1.sha256.tsv").is_file()
+            chr1_report = (
+                output / "qc" / "variant_intersection" / "chr1.tsv"
             )
-            self.assertTrue(
-                (output / "qc" / "variant_sets" / "chrX.sha256.tsv").is_file()
+            chr_x_report = (
+                output / "qc" / "variant_intersection" / "chrX.tsv"
+            )
+            self.assertEqual(
+                chr1_report.read_text().splitlines(),
+                [
+                    "cohort\tinput_records\tshared_records\t"
+                    "excluded_records\texcluded_fraction",
+                    "cohort_a\t2\t2\t0\t0.000000",
+                    "cohort_b\t2\t2\t0\t0.000000",
+                ],
+            )
+            self.assertTrue(chr_x_report.is_file())
+            self.assertFalse(
+                (output / "intermediate" / "intersection" / "chr1").exists()
+            )
+            self.assertFalse(
+                (output / "intermediate" / "intersection" / "chrX").exists()
             )
 
-    def test_mismatched_variants_are_rejected(self):
+    def test_nonshared_variants_are_excluded(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
             config, output, _ = build_test_project(
                 Path(temporary_directory),
@@ -257,10 +277,53 @@ class WorkflowIntegrationTest(unittest.TestCase):
             )
 
             result = run_workflow(config)
+            if result.returncode != 0:
+                self.fail(result.stdout + result.stderr)
+
+            final_vcf = output / "Glostrup.vcf.gz"
+            records = subprocess.run(
+                [
+                    BCFTOOLS,
+                    "query",
+                    "--format",
+                    "%CHROM\t%POS\t%REF\t%ALT\n",
+                    str(final_vcf),
+                ],
+                check=True,
+                text=True,
+                capture_output=True,
+            ).stdout.splitlines()
+            self.assertEqual(
+                records,
+                [
+                    "chr1\t200\tC\tT",
+                    "chrX\t100\tA\tC",
+                ],
+            )
+
+            report = output / "qc" / "variant_intersection" / "chr1.tsv"
+            self.assertEqual(
+                report.read_text().splitlines(),
+                [
+                    "cohort\tinput_records\tshared_records\t"
+                    "excluded_records\texcluded_fraction",
+                    "cohort_a\t3\t1\t2\t0.666667",
+                    "cohort_b\t2\t1\t1\t0.500000",
+                ],
+            )
+
+    def test_empty_intersection_is_rejected(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            config, output, _ = build_test_project(
+                Path(temporary_directory),
+                empty_intersection=True,
+            )
+
+            result = run_workflow(config)
 
             self.assertNotEqual(result.returncode, 0)
             self.assertIn(
-                "Variant records differ between cohorts",
+                "No variants are shared by all cohorts for chr1",
                 result.stdout + result.stderr,
             )
             self.assertFalse((output / "Glostrup.vcf.gz").exists())

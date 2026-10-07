@@ -3,9 +3,10 @@
 Snakemake workflow for merging imputed cohort VCF files into a single
 mega-cohort VCF.
 
-The workflow merges cohorts independently by chromosome, validates that their
-variant records match, and concatenates the chromosome-level results. Do not
-commit real cohort data or other sensitive inputs to this repository.
+The workflow intersects and merges cohorts independently by chromosome, then
+concatenates the chromosome-level results. Only exact variants present in every
+cohort are retained. Do not commit real cohort data or other sensitive inputs
+to this repository.
 
 ## Local development
 
@@ -24,7 +25,8 @@ python -m unittest discover -s tests/integration -v
 ```
 
 The tests require `bcftools` to be available on `PATH`. They use temporary,
-synthetic VCFs and do not access real cohort data.
+synthetic VCFs, including cohorts with differing variants, and do not access
+real cohort data.
 
 The example configuration contains placeholder paths and therefore cannot
 construct a complete workflow DAG. It can still be used for configuration and
@@ -70,7 +72,7 @@ Each cohort must provide one BGZF-compressed VCF per configured chromosome.
 
 Input VCFs must:
 
-- Use the same ordered `CHROM`, `POS`, `REF`, and `ALT` records.
+- Use compatible genome builds and contig names.
 - Contain non-overlapping sample sets, except for known or suspected duplicates.
 - Use `chrX` internally even when the filename contains `chr23`.
 - Be sorted and suitable for TBI indexing.
@@ -78,16 +80,21 @@ Input VCFs must:
 Each input VCF should have a matching `.vcf.gz.tbi`. Missing or stale indexes
 are generated beside the source VCF, so cohort directories must be writable.
 
-## Variant validation
+## Variant intersection
 
-Before merging a chromosome, the workflow streams `CHROM`, `POS`, `REF`, and
-`ALT` from every cohort VCF and calculates a SHA-256 digest.
+Before merging a chromosome, the workflow uses `bcftools isec` to select
+variants present in every cohort. Records must match exactly on `CHROM`, `POS`,
+`REF`, and `ALT`; matching positions with different alleles are not retained.
 
-The merge is rejected if cohorts differ in record count, variant identity, or
-record order. Validation reports are written to:
+The filtered per-cohort VCFs are temporary and are removed after a successful
+merge. The workflow fails if a chromosome has no variants shared by every
+cohort.
+
+Retained QC reports contain the input, shared, and excluded record counts for
+each cohort:
 
 ```text
-<output_directory>/qc/variant_sets/<chromosome>.sha256.tsv
+<output_directory>/qc/variant_intersection/<chromosome>.tsv
 ```
 
 ## Sample duplicates
@@ -130,12 +137,15 @@ For a super-cohort named `Glostrup`, the workflow produces:
 |   `-- ...
 |-- logs/
 |   |-- concatenate.log
+|   |-- intersect/
+|   |   |-- chr1.log
+|   |   `-- ...
 |   `-- merge/
 |       |-- chr1.log
 |       `-- ...
 `-- qc/
-    `-- variant_sets/
-        |-- chr1.sha256.tsv
+    `-- variant_intersection/
+        |-- chr1.tsv
         `-- ...
 ```
 
@@ -173,6 +183,7 @@ tests/integration/test_workflow.py          Synthetic integration tests
 workflow/Snakefile                          Workflow entry point
 workflow/rules/bcftools.smk                 BCFtools workflow rules
 workflow/schemas/config.schema.yaml         Configuration schema
-workflow/scripts/validate_variant_sets.py   Variant-set validator
+workflow/scripts/summarize_variant_intersection.py
+                                            Intersection QC reporter
 requirements-dev.txt                        Local development dependencies
 ```

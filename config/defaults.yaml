@@ -37,7 +37,11 @@ resources:
     threads: 2
     mem_mb: 2000
 
-  validate_variant_sets:
+  intersect_variants:
+    threads: 4
+    mem_mb: 8000
+
+  summarize_intersection:
     threads: 1
     mem_mb: 2000
 
