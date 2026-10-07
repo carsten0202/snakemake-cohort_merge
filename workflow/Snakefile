@@ -16,11 +16,38 @@ OUTPUT_DIRECTORY = str(Path(config["output_directory"]))
 
 FINAL_VCF = str(Path(OUTPUT_DIRECTORY) / f"{SUPER_COHORT}.vcf.gz")
 
+ANALYSIS_DIRECTORY = Path(OUTPUT_DIRECTORY) / "analysis"
+PLINK_PREFIX = str(ANALYSIS_DIRECTORY / "plink" / SUPER_COHORT)
+PCAIR_PREFIX = str(ANALYSIS_DIRECTORY / "pcair" / SUPER_COHORT)
+
+PLINK_OUTPUTS = [
+    f"{PLINK_PREFIX}.bed",
+    f"{PLINK_PREFIX}.bim",
+    f"{PLINK_PREFIX}.fam",
+    f"{PLINK_PREFIX}.log",
+]
+
+PCAIR_OUTPUTS = [
+    f"{PCAIR_PREFIX}.gds",
+    f"{PCAIR_PREFIX}.KINGkinship.png",
+    f"{PCAIR_PREFIX}.KINGkinship.tsv",
+    f"{PCAIR_PREFIX}.ldprune.snpids.txt",
+    f"{PCAIR_PREFIX}.eigenvalues.tsv",
+    f"{PCAIR_PREFIX}.eigenvectors.tsv",
+    f"{PCAIR_PREFIX}.pcair_1v2.png",
+    f"{PCAIR_PREFIX}.pcair_3v4.png",
+    f"{PCAIR_PREFIX}.pcrelate.RData",
+    f"{PCAIR_PREFIX}.pcrelate_1v2.png",
+]
+
 
 rule all:
     input:
         FINAL_VCF,
         f"{FINAL_VCF}.tbi",
+        PLINK_OUTPUTS,
+        PCAIR_OUTPUTS,
 
 
 include: "rules/bcftools.smk"
+include: "rules/pcair.smk"

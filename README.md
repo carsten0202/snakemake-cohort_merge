@@ -1,12 +1,16 @@
 # Cohort Merge
 
 Snakemake workflow for merging imputed cohort VCF files into a single
-mega-cohort VCF.
+mega-cohort VCF and performing kinship-aware population structure analysis.
 
 The workflow intersects and merges cohorts independently by chromosome, then
 concatenates the chromosome-level results. Only exact variants present in every
 cohort are retained. Do not commit real cohort data or other sensitive inputs
 to this repository.
+
+After merging, the workflow converts autosomal biallelic SNP hard calls to
+PLINK BED format and runs quick-pcair. The analysis calculates KING-robust
+kinship, performs LD pruning, runs PC-AiR, and runs PC-Relate.
 
 ## Local development
 
@@ -24,9 +28,10 @@ Run the synthetic integration tests:
 python -m unittest discover -s tests/integration -v
 ```
 
-The tests require `bcftools` to be available on `PATH`. They use temporary,
-synthetic VCFs, including cohorts with differing variants, and do not access
-real cohort data.
+The tests require `bcftools` to be available on `PATH`. PLINK and quick-pcair
+are represented by local test doubles, so their production modules are not
+required. The tests use temporary, synthetic VCFs, including cohorts with
+differing variants, and do not access real cohort data.
 
 The example configuration contains placeholder paths and therefore cannot
 construct a complete workflow DAG. It can still be used for configuration and
@@ -76,6 +81,7 @@ Input VCFs must:
 - Contain non-overlapping sample sets, except for known or suspected duplicates.
 - Use `chrX` internally even when the filename contains `chr23`.
 - Be sorted and suitable for TBI indexing.
+- Contain hard genotype calls in `FORMAT/GT` for population structure analysis.
 
 Each input VCF should have a matching `.vcf.gz.tbi`. Missing or stale indexes
 are generated beside the source VCF, so cohort directories must be writable.
@@ -108,7 +114,7 @@ duplicate
 ```
 
 Biological duplicates that use different sample IDs remain unchanged. Both
-types can therefore be handled together by a later kinship workflow.
+types are retained for the downstream KING-robust kinship analysis.
 
 Cohort order in the super-cohort YAML determines bcftools input order and
 duplicate-sample prefixes.
@@ -123,6 +129,34 @@ than recalculated for the mega-cohort. In particular, imputation-quality and
 allele-frequency annotations should not be assumed to represent the combined
 cohort until an explicit recalculation step is added.
 
+## Population structure analysis
+
+PLINK 2 converts the combined VCF to BED/BIM/FAM files before quick-pcair is
+run. Conversion retains autosomal, biallelic A/C/G/T SNPs and requires the VCF
+`GT` field. Dosage fields such as `DS` and `GP` are not imported, and PLINK does
+not derive new hard calls from them. This is intentional because PLINK BED and
+quick-pcair's GDS input represent hard genotype calls rather than dosages.
+
+VCF files do not carry PLINK pedigree information. Conversion therefore uses
+`--double-id`, assigning every sample its own family ID while retaining the VCF
+sample name as its individual ID. This prevents quick-pcair from passing one
+shared family ID for the entire cohort to SNPRelate's KING implementation.
+
+quick-pcair performs its own LD pruning with SNPRelate. Version 1.1.0 uses a
+10 Mb sliding window and a correlation threshold of `sqrt(0.1)`, corresponding
+to an r-squared threshold of 0.1. A separate PLINK LD-pruning step is therefore
+not performed.
+
+The quick-pcair analysis includes:
+
+- KING-robust kinship estimation.
+- PC-AiR using the LD-pruned SNP set.
+- PC-Relate using the first two PC-AiR components.
+
+The default quick-pcair memory request is 64 GB because its kinship matrix can
+grow quadratically with sample count. Override the rule resources in the
+super-cohort configuration when the cohort requires a larger allocation.
+
 ## Outputs
 
 For a super-cohort named `Glostrup`, the workflow produces:
@@ -131,12 +165,31 @@ For a super-cohort named `Glostrup`, the workflow produces:
 <output_directory>/
 |-- Glostrup.vcf.gz
 |-- Glostrup.vcf.gz.tbi
+|-- analysis/
+|   |-- pcair/
+|   |   |-- Glostrup.gds
+|   |   |-- Glostrup.KINGkinship.png
+|   |   |-- Glostrup.KINGkinship.tsv
+|   |   |-- Glostrup.ldprune.snpids.txt
+|   |   |-- Glostrup.eigenvalues.tsv
+|   |   |-- Glostrup.eigenvectors.tsv
+|   |   |-- Glostrup.pcair_1v2.png
+|   |   |-- Glostrup.pcair_3v4.png
+|   |   |-- Glostrup.pcrelate.RData
+|   |   `-- Glostrup.pcrelate_1v2.png
+|   `-- plink/
+|       |-- Glostrup.bed
+|       |-- Glostrup.bim
+|       |-- Glostrup.fam
+|       `-- Glostrup.log
 |-- by_chromosome/
 |   |-- Glostrup.chr1.vcf.gz
 |   |-- Glostrup.chr1.vcf.gz.tbi
 |   `-- ...
 |-- logs/
 |   |-- concatenate.log
+|   |-- plink_conversion.log
+|   |-- quick_pcair.log
 |   |-- intersect/
 |   |   |-- chr1.log
 |   |   `-- ...
@@ -159,7 +212,13 @@ Production rules load these environment modules in order:
 perl
 gsl/2.5
 bcftools/1.21
+plink/2.0-alpha-6.2
+R/4.4.2
+quick-pcair/1.1.0
 ```
+
+Each rule loads only the modules it needs. The quick-pcair rule loads
+`R/4.4.2` before `quick-pcair/1.1.0`, as required by the module definition.
 
 Run Glostrup with:
 
@@ -182,6 +241,7 @@ config/super_cohorts/                       Super-cohort configurations
 tests/integration/test_workflow.py          Synthetic integration tests
 workflow/Snakefile                          Workflow entry point
 workflow/rules/bcftools.smk                 BCFtools workflow rules
+workflow/rules/pcair.smk                    PLINK and quick-pcair rules
 workflow/schemas/config.schema.yaml         Configuration schema
 workflow/scripts/summarize_variant_intersection.py
                                             Intersection QC reporter

@@ -1,4 +1,5 @@
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -157,18 +158,79 @@ def build_test_project(root, mismatch=False, empty_intersection=False):
     return config_path, output, source_vcfs
 
 
-def run_workflow(config):
+def write_fake_analysis_tools(bin_directory, call_log):
+    plink2 = bin_directory / "plink2"
+    plink2.write_text(
+        """#!/usr/bin/env python3
+import os
+import sys
+from pathlib import Path
+
+args = sys.argv[1:]
+prefix = Path(args[args.index("--out") + 1])
+prefix.parent.mkdir(parents=True, exist_ok=True)
+for suffix in (".bed", ".bim", ".fam", ".log"):
+    Path(f"{prefix}{suffix}").touch()
+with open(os.environ["FAKE_TOOL_CALLS"], "a") as handle:
+    handle.write("plink2 " + " ".join(args) + "\\n")
+"""
+    )
+    plink2.chmod(0o755)
+
+    quick_pcair = bin_directory / "quick-pcair"
+    quick_pcair.write_text(
+        """#!/usr/bin/env python3
+import os
+import sys
+from pathlib import Path
+
+args = sys.argv[1:]
+prefix = Path(args[args.index("--output") + 1])
+prefix.parent.mkdir(parents=True, exist_ok=True)
+suffixes = (
+    ".gds",
+    ".KINGkinship.png",
+    ".KINGkinship.tsv",
+    ".ldprune.snpids.txt",
+    ".eigenvalues.tsv",
+    ".eigenvectors.tsv",
+    ".pcair_1v2.png",
+    ".pcair_3v4.png",
+    ".pcrelate.RData",
+    ".pcrelate_1v2.png",
+)
+for suffix in suffixes:
+    Path(f"{prefix}{suffix}").touch()
+with open(os.environ["FAKE_TOOL_CALLS"], "a") as handle:
+    handle.write("quick-pcair " + " ".join(args) + "\\n")
+"""
+    )
+    quick_pcair.chmod(0o755)
+
+    return {
+        **os.environ,
+        "FAKE_TOOL_CALLS": str(call_log),
+        "PATH": f"{bin_directory}{os.pathsep}{os.environ['PATH']}",
+    }
+
+
+def run_workflow(config, targets=None, env=None):
+    command = [
+        sys.executable,
+        "-m",
+        "snakemake",
+        "--configfile",
+        str(config),
+        "--cores",
+        "4",
+    ]
+    if targets:
+        command.extend(str(target) for target in targets)
+
     return subprocess.run(
-        [
-            sys.executable,
-            "-m",
-            "snakemake",
-            "--configfile",
-            str(config),
-            "--cores",
-            "4",
-        ],
+        command,
         cwd=REPOSITORY,
+        env=env,
         text=True,
         capture_output=True,
     )
@@ -182,7 +244,10 @@ class WorkflowIntegrationTest(unittest.TestCase):
                 Path(temporary_directory)
             )
 
-            result = run_workflow(config)
+            result = run_workflow(
+                config,
+                [output / "Glostrup.vcf.gz.tbi"],
+            )
             if result.returncode != 0:
                 self.fail(result.stdout + result.stderr)
 
@@ -276,7 +341,10 @@ class WorkflowIntegrationTest(unittest.TestCase):
                 mismatch=True,
             )
 
-            result = run_workflow(config)
+            result = run_workflow(
+                config,
+                [output / "Glostrup.vcf.gz.tbi"],
+            )
             if result.returncode != 0:
                 self.fail(result.stdout + result.stderr)
 
@@ -319,7 +387,10 @@ class WorkflowIntegrationTest(unittest.TestCase):
                 empty_intersection=True,
             )
 
-            result = run_workflow(config)
+            result = run_workflow(
+                config,
+                [output / "Glostrup.vcf.gz.tbi"],
+            )
 
             self.assertNotEqual(result.returncode, 0)
             self.assertIn(
@@ -327,6 +398,49 @@ class WorkflowIntegrationTest(unittest.TestCase):
                 result.stdout + result.stderr,
             )
             self.assertFalse((output / "Glostrup.vcf.gz").exists())
+
+    def test_population_structure_workflow(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            config, output, _ = build_test_project(root)
+            bin_directory = root / "bin"
+            bin_directory.mkdir()
+            call_log = root / "analysis_calls.log"
+            env = write_fake_analysis_tools(bin_directory, call_log)
+
+            result = run_workflow(config, env=env)
+            if result.returncode != 0:
+                self.fail(result.stdout + result.stderr)
+
+            plink_prefix = output / "analysis" / "plink" / "Glostrup"
+            for suffix in (".bed", ".bim", ".fam", ".log"):
+                self.assertTrue(Path(f"{plink_prefix}{suffix}").is_file())
+
+            pcair_prefix = output / "analysis" / "pcair" / "Glostrup"
+            pcair_suffixes = (
+                ".gds",
+                ".KINGkinship.png",
+                ".KINGkinship.tsv",
+                ".ldprune.snpids.txt",
+                ".eigenvalues.tsv",
+                ".eigenvectors.tsv",
+                ".pcair_1v2.png",
+                ".pcair_3v4.png",
+                ".pcrelate.RData",
+                ".pcrelate_1v2.png",
+            )
+            for suffix in pcair_suffixes:
+                self.assertTrue(Path(f"{pcair_prefix}{suffix}").is_file())
+
+            calls = call_log.read_text().splitlines()
+            self.assertEqual(len(calls), 2)
+            self.assertIn("--vcf-require-gt", calls[0])
+            self.assertIn("--double-id", calls[0])
+            self.assertIn("--autosome", calls[0])
+            self.assertIn("--snps-only just-acgt", calls[0])
+            self.assertIn("--max-alleles 2", calls[0])
+            self.assertIn(f"--plink {plink_prefix}", calls[1])
+            self.assertIn(f"--output {pcair_prefix}", calls[1])
 
 
 if __name__ == "__main__":

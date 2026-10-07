@@ -1,7 +1,7 @@
 $schema: https://json-schema.org/draft/2020-12/schema
 
-title: Cohort merge configuration
-description: Configuration for creating a merged super-cohort VCF.
+title: Cohort merge and population structure configuration
+description: Configuration for merging a super-cohort and analyzing its population structure.
 type: object
 additionalProperties: false
 
@@ -48,14 +48,15 @@ properties:
     additionalProperties: false
     required:
       - bcftools
+      - plink
+      - quick_pcair
     properties:
       bcftools:
-        type: array
-        minItems: 1
-        uniqueItems: true
-        items:
-          type: string
-          minLength: 1
+        $ref: '#/$defs/moduleList'
+      plink:
+        $ref: '#/$defs/moduleList'
+      quick_pcair:
+        $ref: '#/$defs/moduleList'
 
   resources:
     type: object
@@ -66,6 +67,8 @@ properties:
       - summarize_intersection
       - merge_chromosome
       - concatenate_chromosomes
+      - convert_vcf_to_plink
+      - run_quick_pcair
     properties:
       index_vcf:
         $ref: '#/$defs/ruleResources'
@@ -76,6 +79,10 @@ properties:
       merge_chromosome:
         $ref: '#/$defs/ruleResources'
       concatenate_chromosomes:
+        $ref: '#/$defs/ruleResources'
+      convert_vcf_to_plink:
+        $ref: '#/$defs/ruleResources'
+      run_quick_pcair:
         $ref: '#/$defs/ruleResources'
 
   cohorts:
@@ -88,6 +95,14 @@ properties:
       $ref: '#/$defs/cohort'
 
 $defs:
+  moduleList:
+    type: array
+    minItems: 1
+    uniqueItems: true
+    items:
+      type: string
+      minLength: 1
+
   ruleResources:
     type: object
     additionalProperties: false

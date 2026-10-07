@@ -32,6 +32,13 @@ modules:
     - gsl/2.5
     - bcftools/1.21
 
+  plink:
+    - plink/2.0-alpha-6.2
+
+  quick_pcair:
+    - R/4.4.2
+    - quick-pcair/1.1.0
+
 resources:
   index_vcf:
     threads: 2
@@ -52,3 +59,11 @@ resources:
   concatenate_chromosomes:
     threads: 4
     mem_mb: 8000
+
+  convert_vcf_to_plink:
+    threads: 4
+    mem_mb: 16000
+
+  run_quick_pcair:
+    threads: 8
+    mem_mb: 64000
