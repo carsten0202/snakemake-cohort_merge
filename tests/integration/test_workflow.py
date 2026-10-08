@@ -80,7 +80,8 @@ def build_test_project(
 ):
     cohort_a = root / "cohort_a"
     cohort_b = root / "cohort_b"
-    output = root / "output"
+    output_root = root / "output"
+    output = output_root / "Glostrup"
 
     cohort_a.mkdir()
     cohort_b.mkdir()
@@ -141,7 +142,7 @@ def build_test_project(
 
     config = {
         "super_cohort": "Glostrup",
-        "output_directory": str(output),
+        "output_directory": str(output_root),
         "chromosomes": ["chr1", "chrX"],
         "cohorts": {
             "cohort_a": {
@@ -265,8 +266,8 @@ class WorkflowIntegrationTest(unittest.TestCase):
                 self.assertTrue(Path(f"{vcf}.tbi").is_file())
 
             chromosome_outputs = [
-                output / "by_chromosome" / "Glostrup.chr1.vcf.gz",
-                output / "by_chromosome" / "Glostrup.chrX.vcf.gz",
+                output / "by_chromosome" / "chr1.vcf.gz",
+                output / "by_chromosome" / "chrX.vcf.gz",
             ]
             for vcf in chromosome_outputs:
                 self.assertTrue(vcf.is_file())

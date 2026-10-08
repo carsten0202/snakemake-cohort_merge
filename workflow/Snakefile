@@ -18,7 +18,7 @@ EXCLUSION_COHORTS = [
 ]
 HAS_SAMPLE_EXCLUSIONS = bool(EXCLUSION_COHORTS)
 SUPER_COHORT = config["super_cohort"]
-OUTPUT_DIRECTORY = str(Path(config["output_directory"]))
+OUTPUT_DIRECTORY = str(Path(config["output_directory"]) / SUPER_COHORT)
 
 FINAL_VCF = str(Path(OUTPUT_DIRECTORY) / f"{SUPER_COHORT}.vcf.gz")
 

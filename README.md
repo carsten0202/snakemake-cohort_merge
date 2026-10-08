@@ -52,8 +52,9 @@ snakemake \
 - Environment modules.
 - Initial thread and memory requirements.
 
-A super-cohort configuration supplies its name, output directory, and cohort
-input directories. Values in the super-cohort configuration recursively
+A super-cohort configuration supplies its name, shared output root, and cohort
+input directories. The workflow writes all artifacts beneath a directory named
+for the super-cohort. Values in the super-cohort configuration recursively
 override the defaults.
 
 Real super-cohort configurations under `config/super_cohorts/` are ignored by
@@ -123,7 +124,7 @@ Retained QC reports contain the input, shared, and excluded record counts for
 each cohort:
 
 ```text
-<output_directory>/qc/variant_intersection/<chromosome>.tsv
+<output_directory>/<super_cohort>/qc/variant_intersection/<chromosome>.tsv
 ```
 
 ## Sample duplicates
@@ -193,45 +194,46 @@ For a super-cohort named `Glostrup`, the workflow produces:
 
 ```text
 <output_directory>/
-|-- Glostrup.vcf.gz
-|-- Glostrup.vcf.gz.tbi
-|-- analysis/
-|   |-- pcair/
-|   |   |-- Glostrup.gds
-|   |   |-- Glostrup.KINGkinship.png
-|   |   |-- Glostrup.KINGkinship.tsv
-|   |   |-- Glostrup.ldprune.snpids.txt
-|   |   |-- Glostrup.eigenvalues.tsv
-|   |   |-- Glostrup.eigenvectors.tsv
-|   |   |-- Glostrup.pcair_1v2.png
-|   |   |-- Glostrup.pcair_3v4.png
-|   |   |-- Glostrup.pcrelate.RData
-|   |   `-- Glostrup.pcrelate_1v2.png
-|   `-- plink/
-|       |-- Glostrup.bed
-|       |-- Glostrup.bim
-|       |-- Glostrup.fam
-|       `-- Glostrup.log
-|-- by_chromosome/
-|   |-- Glostrup.chr1.vcf.gz
-|   |-- Glostrup.chr1.vcf.gz.tbi
-|   `-- ...
-|-- logs/
-|   |-- concatenate.log
-|   |-- plink_conversion.log
-|   |-- quick_pcair.log
-|   |-- sample_exclusions.log       (when exclusions are configured)
-|   |-- sample_exclusions.prepare.log
-|   |-- intersect/
-|   |   |-- chr1.log
-|   |   `-- ...
-|   `-- merge/
-|       |-- chr1.log
-|       `-- ...
-`-- qc/
-    `-- variant_intersection/
-        |-- chr1.tsv
-        `-- ...
+`-- Glostrup/
+    |-- Glostrup.vcf.gz
+    |-- Glostrup.vcf.gz.tbi
+    |-- analysis/
+    |   |-- pcair/
+    |   |   |-- Glostrup.gds
+    |   |   |-- Glostrup.KINGkinship.png
+    |   |   |-- Glostrup.KINGkinship.tsv
+    |   |   |-- Glostrup.ldprune.snpids.txt
+    |   |   |-- Glostrup.eigenvalues.tsv
+    |   |   |-- Glostrup.eigenvectors.tsv
+    |   |   |-- Glostrup.pcair_1v2.png
+    |   |   |-- Glostrup.pcair_3v4.png
+    |   |   |-- Glostrup.pcrelate.RData
+    |   |   `-- Glostrup.pcrelate_1v2.png
+    |   `-- plink/
+    |       |-- Glostrup.bed
+    |       |-- Glostrup.bim
+    |       |-- Glostrup.fam
+    |       `-- Glostrup.log
+    |-- by_chromosome/
+    |   |-- chr1.vcf.gz
+    |   |-- chr1.vcf.gz.tbi
+    |   `-- ...
+    |-- logs/
+    |   |-- concatenate.log
+    |   |-- plink_conversion.log
+    |   |-- quick_pcair.log
+    |   |-- sample_exclusions.log       (when exclusions are configured)
+    |   |-- sample_exclusions.prepare.log
+    |   |-- intersect/
+    |   |   |-- chr1.log
+    |   |   `-- ...
+    |   `-- merge/
+    |       |-- chr1.log
+    |       `-- ...
+    `-- qc/
+        `-- variant_intersection/
+            |-- chr1.tsv
+            `-- ...
 ```
 
 Chromosome-level outputs are retained after final concatenation.

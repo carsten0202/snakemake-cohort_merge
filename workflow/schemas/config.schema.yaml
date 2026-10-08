@@ -23,7 +23,7 @@ properties:
   output_directory:
     type: string
     minLength: 1
-    description: Directory in which workflow outputs will be written.
+    description: Root directory containing one output directory per super-cohort.
 
   chromosomes:
     type: array

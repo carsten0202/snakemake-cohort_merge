@@ -1,5 +1,5 @@
 super_cohort: Glostrup
-output_directory: /path/to/glostrup/output
+output_directory: /path/to/cohort_merge/output
 
 cohorts:
   cohort_a:

@@ -3,7 +3,7 @@ BCFTOOLS_MODULES = tuple(config["modules"]["bcftools"])
 MERGED_VCF_PATTERN = str(
     Path(OUTPUT_DIRECTORY)
     / "by_chromosome"
-    / f"{SUPER_COHORT}.{{chromosome}}.vcf.gz"
+    / "{chromosome}.vcf.gz"
 )
 
 INTERSECTION_DIRECTORY_PATTERN = str(
