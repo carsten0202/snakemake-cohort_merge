@@ -72,7 +72,12 @@ def compress_vcf(source, destination):
     )
 
 
-def build_test_project(root, mismatch=False, empty_intersection=False):
+def build_test_project(
+    root,
+    mismatch=False,
+    empty_intersection=False,
+    exclusion_entries=None,
+):
     cohort_a = root / "cohort_a"
     cohort_b = root / "cohort_b"
     output = root / "output"
@@ -151,6 +156,11 @@ def build_test_project(root, mismatch=False, empty_intersection=False):
             },
         },
     }
+
+    if exclusion_entries is not None:
+        exclusions = root / "cohort_b_exclusions.txt"
+        exclusions.write_text("\n".join(exclusion_entries) + "\n")
+        config["cohorts"]["cohort_b"]["exclude_samples"] = str(exclusions)
 
     config_path = root / "config.json"
     config_path.write_text(json.dumps(config))
@@ -398,6 +408,113 @@ class WorkflowIntegrationTest(unittest.TestCase):
                 result.stdout + result.stderr,
             )
             self.assertFalse((output / "Glostrup.vcf.gz").exists())
+
+    def test_samples_are_excluded_from_configured_cohort(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            config, output, _ = build_test_project(
+                Path(temporary_directory),
+                exclusion_entries=[
+                    "cohort_b_sample barcode-123 PCA",
+                    "unknown_sample barcode-456 PCA",
+                ],
+            )
+
+            result = run_workflow(
+                config,
+                [output / "Glostrup.vcf.gz.tbi"],
+            )
+            if result.returncode != 0:
+                self.fail(result.stdout + result.stderr)
+
+            final_vcf = output / "Glostrup.vcf.gz"
+            samples = subprocess.run(
+                [BCFTOOLS, "query", "--list-samples", str(final_vcf)],
+                check=True,
+                text=True,
+                capture_output=True,
+            ).stdout.splitlines()
+            self.assertEqual(
+                samples,
+                [
+                    "duplicate",
+                    "cohort_a_sample",
+                    "2:duplicate",
+                ],
+            )
+
+            preparation_log = output / "logs" / "sample_exclusions.prepare.log"
+            self.assertIn(
+                "sample 'unknown_sample' is not present in cohort 'cohort_b'; "
+                "skipping",
+                preparation_log.read_text(),
+            )
+            self.assertFalse(
+                (output / "intermediate" / "sample_exclusions.txt").exists()
+            )
+            self.assertFalse(
+                (
+                    output
+                    / "intermediate"
+                    / "unfiltered"
+                    / "Glostrup.bcf"
+                ).exists()
+            )
+
+    def test_ambiguous_excluded_sample_is_rejected(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            config, output, _ = build_test_project(
+                Path(temporary_directory),
+                exclusion_entries=["duplicate barcode-123 PCA"],
+            )
+
+            result = run_workflow(
+                config,
+                [output / "Glostrup.vcf.gz.tbi"],
+            )
+
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn(
+                "Cannot globally exclude sample 'duplicate' from cohort "
+                "'cohort_b': the identifier is also present in cohort(s) "
+                "cohort_a",
+                result.stdout + result.stderr,
+            )
+            self.assertFalse((output / "Glostrup.vcf.gz").exists())
+
+    def test_unknown_exclusions_leave_samples_unchanged(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            config, output, _ = build_test_project(
+                Path(temporary_directory),
+                exclusion_entries=["unknown_sample barcode-456 PCA"],
+            )
+
+            result = run_workflow(
+                config,
+                [output / "Glostrup.vcf.gz.tbi"],
+            )
+            if result.returncode != 0:
+                self.fail(result.stdout + result.stderr)
+
+            samples = subprocess.run(
+                [
+                    BCFTOOLS,
+                    "query",
+                    "--list-samples",
+                    str(output / "Glostrup.vcf.gz"),
+                ],
+                check=True,
+                text=True,
+                capture_output=True,
+            ).stdout.splitlines()
+            self.assertEqual(
+                samples,
+                [
+                    "duplicate",
+                    "cohort_a_sample",
+                    "2:duplicate",
+                    "cohort_b_sample",
+                ],
+            )
 
     def test_population_structure_workflow(self):
         with tempfile.TemporaryDirectory() as temporary_directory:

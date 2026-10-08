@@ -67,6 +67,7 @@ properties:
       - summarize_intersection
       - merge_chromosome
       - concatenate_chromosomes
+      - exclude_samples
       - convert_vcf_to_plink
       - run_quick_pcair
     properties:
@@ -79,6 +80,8 @@ properties:
       merge_chromosome:
         $ref: '#/$defs/ruleResources'
       concatenate_chromosomes:
+        $ref: '#/$defs/ruleResources'
+      exclude_samples:
         $ref: '#/$defs/ruleResources'
       convert_vcf_to_plink:
         $ref: '#/$defs/ruleResources'
@@ -150,3 +153,10 @@ $defs:
           chrX:
             type: string
             const: chr23
+
+      exclude_samples:
+        type: string
+        minLength: 1
+        description: >
+          Optional whitespace-delimited file of samples to exclude. The first
+          column is interpreted as the VCF sample identifier.

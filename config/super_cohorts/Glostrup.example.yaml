@@ -8,5 +8,6 @@ cohorts:
   cohort_b:
     directory: /path/to/cohort_b
     pattern: "{chromosome}.filtered.vcf.gz"
+    exclude_samples: /path/to/cohort_b/excluded_samples.txt
     chromosome_aliases:
       chrX: chr23

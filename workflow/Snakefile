@@ -11,6 +11,12 @@ validate(config, "schemas/config.schema.yaml")
 
 CHROMOSOMES = config["chromosomes"]
 COHORTS = list(config["cohorts"])
+EXCLUSION_COHORTS = [
+    cohort
+    for cohort in COHORTS
+    if "exclude_samples" in config["cohorts"][cohort]
+]
+HAS_SAMPLE_EXCLUSIONS = bool(EXCLUSION_COHORTS)
 SUPER_COHORT = config["super_cohort"]
 OUTPUT_DIRECTORY = str(Path(config["output_directory"]))
 

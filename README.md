@@ -63,6 +63,23 @@ exposing server paths.
 Each cohort uses `input.pattern` unless it defines its own `pattern`. Patterns
 must contain `{chromosome}` and end in `.vcf.gz`.
 
+A cohort can optionally provide a file of samples to remove from the final
+super-cohort:
+
+```yaml
+cohorts:
+  cohort_a:
+    directory: /path/to/cohort_a
+
+  cohort_b:
+    directory: /path/to/cohort_b
+    exclude_samples: /path/to/cohort_b/excluded_samples.txt
+```
+
+The exclusion file is whitespace-delimited and has no header. The first column
+must contain the VCF sample identifier; additional columns, such as a barcode
+or exclusion reason, are ignored. Blank lines are also ignored.
+
 A cohort whose X chromosome file is named with `chr23`, while the VCF itself
 still uses `chrX`, can define:
 
@@ -82,6 +99,12 @@ Input VCFs must:
 - Use `chrX` internally even when the filename contains `chr23`.
 - Be sorted and suitable for TBI indexing.
 - Contain hard genotype calls in `FORMAT/GT` for population structure analysis.
+
+The workflow validates exclusion identifiers against the first configured
+chromosome of every cohort. An identifier absent from its configured cohort is
+reported in `logs/sample_exclusions.prepare.log` and skipped. An identifier
+present in both its configured cohort and another cohort is rejected because a
+global exclusion would be ambiguous.
 
 Each input VCF should have a matching `.vcf.gz.tbi`. Missing or stale indexes
 are generated beside the source VCF, so cohort directories must be writable.
@@ -118,6 +141,13 @@ types are retained for the downstream KING-robust kinship analysis.
 
 Cohort order in the super-cohort YAML determines bcftools input order and
 duplicate-sample prefixes.
+
+When sample exclusions are configured, the workflow combines validated IDs
+from all cohort exclusion files and removes them once after chromosome
+concatenation. General duplicate-ID support remains enabled, but an ID selected
+for exclusion must be unique to its configured cohort. Supported sample-based
+INFO fields such as `AC` and `AN` are recalculated by `bcftools view`; other INFO
+fields remain subject to the limitations below.
 
 ## INFO fields
 
@@ -190,6 +220,8 @@ For a super-cohort named `Glostrup`, the workflow produces:
 |   |-- concatenate.log
 |   |-- plink_conversion.log
 |   |-- quick_pcair.log
+|   |-- sample_exclusions.log       (when exclusions are configured)
+|   |-- sample_exclusions.prepare.log
 |   |-- intersect/
 |   |   |-- chr1.log
 |   |   `-- ...
@@ -246,6 +278,8 @@ workflow/Snakefile                          Workflow entry point
 workflow/rules/bcftools.smk                 BCFtools workflow rules
 workflow/rules/pcair.smk                    PLINK and quick-pcair rules
 workflow/schemas/config.schema.yaml         Configuration schema
+workflow/scripts/prepare_sample_exclusions.py
+                                            Sample exclusion validator
 workflow/scripts/summarize_variant_intersection.py
                                             Intersection QC reporter
 requirements-dev.txt                        Local development dependencies

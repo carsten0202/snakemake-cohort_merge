@@ -62,6 +62,10 @@ resources:
     threads: 4
     mem_mb: 8000
 
+  exclude_samples:
+    threads: 4
+    mem_mb: 8000
+
   convert_vcf_to_plink:
     threads: 4
     mem_mb: 16000

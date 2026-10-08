@@ -17,6 +17,17 @@ INTERSECTION_REPORT_PATTERN = str(
     / "{chromosome}.tsv"
 )
 
+SAMPLE_EXCLUSION_LIST = str(
+    Path(OUTPUT_DIRECTORY) / "intermediate" / "sample_exclusions.txt"
+)
+
+UNFILTERED_BCF = str(
+    Path(OUTPUT_DIRECTORY)
+    / "intermediate"
+    / "unfiltered"
+    / f"{SUPER_COHORT}.bcf"
+)
+
 
 def cohort_vcf(cohort, chromosome):
     cohort_config = config["cohorts"][cohort]
@@ -144,26 +155,110 @@ rule merge_chromosome:
         """
 
 
-rule concatenate_chromosomes:
-    input:
-        vcfs=expand(MERGED_VCF_PATTERN, chromosome=CHROMOSOMES),
-        indexes=expand(f"{MERGED_VCF_PATTERN}.tbi", chromosome=CHROMOSOMES),
-    output:
-        vcf=FINAL_VCF
-    threads:
-        config["resources"]["concatenate_chromosomes"]["threads"]
-    resources:
-        mem_mb=config["resources"]["concatenate_chromosomes"]["mem_mb"]
-    log:
-        str(Path(OUTPUT_DIRECTORY) / "logs" / "concatenate.log")
-    envmodules:
-        *BCFTOOLS_MODULES
-    shell:
-        """
-        bcftools concat \
-            --output-type z \
-            --threads {threads} \
-            --output {output.vcf:q} \
-            {input.vcfs:q} \
-            2> {log:q}
-        """
+if HAS_SAMPLE_EXCLUSIONS:
+    rule prepare_sample_exclusions:
+        input:
+            exclusions=[
+                config["cohorts"][cohort]["exclude_samples"]
+                for cohort in EXCLUSION_COHORTS
+            ],
+            vcfs=[cohort_vcf(cohort, CHROMOSOMES[0]) for cohort in COHORTS],
+        output:
+            samples=temp(SAMPLE_EXCLUSION_LIST)
+        params:
+            cohorts=COHORTS,
+            exclusion_cohorts=EXCLUSION_COHORTS,
+        log:
+            str(Path(OUTPUT_DIRECTORY) / "logs" / "sample_exclusions.prepare.log")
+        envmodules:
+            *BCFTOOLS_MODULES
+        script:
+            "../scripts/prepare_sample_exclusions.py"
+
+
+    rule concatenate_chromosomes:
+        input:
+            vcfs=expand(MERGED_VCF_PATTERN, chromosome=CHROMOSOMES),
+            indexes=expand(f"{MERGED_VCF_PATTERN}.tbi", chromosome=CHROMOSOMES),
+        output:
+            bcf=temp(UNFILTERED_BCF),
+            index=temp(f"{UNFILTERED_BCF}.csi"),
+        threads:
+            config["resources"]["concatenate_chromosomes"]["threads"]
+        resources:
+            mem_mb=config["resources"]["concatenate_chromosomes"]["mem_mb"]
+        log:
+            str(Path(OUTPUT_DIRECTORY) / "logs" / "concatenate.log")
+        envmodules:
+            *BCFTOOLS_MODULES
+        shell:
+            """
+            bcftools concat \
+                --output-type b \
+                --write-index=csi \
+                --threads {threads} \
+                --output {output.bcf:q} \
+                {input.vcfs:q} \
+                2> {log:q}
+            """
+
+
+    rule exclude_samples:
+        input:
+            bcf=UNFILTERED_BCF,
+            index=f"{UNFILTERED_BCF}.csi",
+            samples=SAMPLE_EXCLUSION_LIST,
+        output:
+            vcf=FINAL_VCF
+        threads:
+            config["resources"]["exclude_samples"]["threads"]
+        resources:
+            mem_mb=config["resources"]["exclude_samples"]["mem_mb"]
+        log:
+            str(Path(OUTPUT_DIRECTORY) / "logs" / "sample_exclusions.log")
+        envmodules:
+            *BCFTOOLS_MODULES
+        shell:
+            """
+            if [[ -s {input.samples:q} ]]; then
+                bcftools view \
+                    --force-samples \
+                    --samples-file ^{input.samples:q} \
+                    --output-type z \
+                    --threads {threads} \
+                    --output {output.vcf:q} \
+                    {input.bcf:q} \
+                    2> {log:q}
+            else
+                bcftools view \
+                    --output-type z \
+                    --threads {threads} \
+                    --output {output.vcf:q} \
+                    {input.bcf:q} \
+                    2> {log:q}
+            fi
+            """
+else:
+    rule concatenate_chromosomes:
+        input:
+            vcfs=expand(MERGED_VCF_PATTERN, chromosome=CHROMOSOMES),
+            indexes=expand(f"{MERGED_VCF_PATTERN}.tbi", chromosome=CHROMOSOMES),
+        output:
+            vcf=FINAL_VCF
+        threads:
+            config["resources"]["concatenate_chromosomes"]["threads"]
+        resources:
+            mem_mb=config["resources"]["concatenate_chromosomes"]["mem_mb"]
+        log:
+            str(Path(OUTPUT_DIRECTORY) / "logs" / "concatenate.log")
+        envmodules:
+            *BCFTOOLS_MODULES
+        shell:
+            """
+            bcftools concat \
+                --output-type z \
+                --threads {threads} \
+                --output {output.vcf:q} \
+                {input.vcfs:q} \
+                2> {log:q}
+            """
