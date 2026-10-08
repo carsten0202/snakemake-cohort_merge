@@ -36,6 +36,8 @@ modules:
     - plink/2.0-alpha-6.2
 
   quick_pcair:
+    - gcc/13.2.0
+    - openjdk/20.0.0
     - R/4.4.2
     - quick-pcair/1.1.0
 

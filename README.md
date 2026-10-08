@@ -213,12 +213,15 @@ perl
 gsl/2.5
 bcftools/1.21
 plink/2.0-alpha-6.2
+gcc/13.2.0
+openjdk/20.0.0
 R/4.4.2
 quick-pcair/1.1.0
 ```
 
 Each rule loads only the modules it needs. The quick-pcair rule loads
-`R/4.4.2` before `quick-pcair/1.1.0`, as required by the module definition.
+`gcc/13.2.0`, `openjdk/20.0.0`, `R/4.4.2`, and `quick-pcair/1.1.0` in
+prerequisite order.
 
 Run Glostrup with:
 
