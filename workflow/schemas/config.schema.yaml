@@ -65,6 +65,8 @@ properties:
       - index_vcf
       - intersect_variants
       - summarize_intersection
+      - prepare_merge_vcf
+      - prepare_sample_exclusions
       - merge_chromosome
       - concatenate_chromosomes
       - exclude_samples
@@ -76,6 +78,10 @@ properties:
       intersect_variants:
         $ref: '#/$defs/ruleResources'
       summarize_intersection:
+        $ref: '#/$defs/ruleResources'
+      prepare_merge_vcf:
+        $ref: '#/$defs/ruleResources'
+      prepare_sample_exclusions:
         $ref: '#/$defs/ruleResources'
       merge_chromosome:
         $ref: '#/$defs/ruleResources'

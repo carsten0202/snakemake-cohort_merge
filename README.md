@@ -120,6 +120,11 @@ The filtered per-cohort VCFs are temporary and are removed after a successful
 merge. The workflow fails if a chromosome has no variants shared by every
 cohort.
 
+Before merging, the workflow creates temporary BCF copies with all INFO fields
+and all FORMAT fields except `GT` removed. This prevents incompatible
+cohort-specific annotation definitions from affecting the merge. The original
+intersection files are used for the retained QC counts below.
+
 Retained QC reports contain the input, shared, and excluded record counts for
 each cohort:
 
@@ -146,19 +151,19 @@ duplicate-sample prefixes.
 When sample exclusions are configured, the workflow combines validated IDs
 from all cohort exclusion files and removes them once after chromosome
 concatenation. General duplicate-ID support remains enabled, but an ID selected
-for exclusion must be unique to its configured cohort. Supported sample-based
-INFO fields such as `AC` and `AN` are recalculated by `bcftools view`; other INFO
-fields remain subject to the limitations below.
+for exclusion must be unique to its configured cohort.
 
-## INFO fields
+## Retained VCF fields
 
-The workflow currently preserves bcftools' default INFO merge behavior.
-
-Standard bcftools defaults aggregate selected fields such as `DP` and `DP4`;
-other cohort-level annotations may be inherited from the first input rather
-than recalculated for the mega-cohort. In particular, imputation-quality and
-allele-frequency annotations should not be assumed to represent the combined
-cohort until an explicit recalculation step is added.
+The chromosome and final VCFs retain variant coordinates, IDs, alleles, quality,
+filters, and hard genotype calls in `FORMAT/GT`. Cohort-specific INFO fields and
+other FORMAT fields such as `DS`, `GP`, and `HDS` are intentionally discarded:
+they can have incompatible definitions and do not describe the combined cohort.
+Symbolic and non-SNP records remain in the merged VCF, but INFO annotations that
+describe structural intervals, including `END`, are not retained. The merged
+VCF is therefore intended for the documented hard-call population analysis,
+not as a structural-variant output. The downstream PLINK conversion retains
+only biallelic A/C/G/T SNPs.
 
 ## Population structure analysis
 
@@ -184,7 +189,7 @@ The quick-pcair analysis includes:
 - PC-AiR using the LD-pruned SNP set.
 - PC-Relate using the first two PC-AiR components.
 
-The default quick-pcair memory request is 64 GB because its kinship matrix can
+The default quick-pcair memory request is 256 GB because its kinship matrix can
 grow quadratically with sample count. Override the rule resources in the
 super-cohort configuration when the cohort requires a larger allocation.
 
@@ -226,6 +231,9 @@ For a super-cohort named `Glostrup`, the workflow produces:
     |   |-- sample_exclusions.prepare.log
     |   |-- intersect/
     |   |   |-- chr1.log
+    |   |   `-- ...
+    |   |-- prepare_merge/
+    |   |   |-- chr1/
     |   |   `-- ...
     |   `-- merge/
     |       |-- chr1.log

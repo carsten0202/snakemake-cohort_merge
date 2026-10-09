@@ -55,6 +55,62 @@ def write_vcf(path, chromosome, records, samples):
     path.write_text("\n".join(lines) + "\n")
 
 
+def write_symbolic_vcf(path, samples, flexible_numbers):
+    if flexible_numbers:
+        af_number, ds_number, gp_number, hds_number = "A", "A", "G", "."
+    else:
+        af_number, ds_number, gp_number, hds_number = "1", "1", "3", "2"
+
+    lines = [
+        "##fileformat=VCFv4.2",
+        "##contig=<ID=chr1>",
+        f"##INFO=<ID=AF,Number={af_number},Type=Float,"
+        'Description="Allele frequency">',
+        '##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">',
+        f"##FORMAT=<ID=DS,Number={ds_number},Type=Float,"
+        'Description="Dosage">',
+        f"##FORMAT=<ID=GP,Number={gp_number},Type=Float,"
+        'Description="Genotype probabilities">',
+        f"##FORMAT=<ID=HDS,Number={hds_number},Type=Float,"
+        'Description="Haplotype dosage">',
+        "\t".join(
+            [
+                "#CHROM",
+                "POS",
+                "ID",
+                "REF",
+                "ALT",
+                "QUAL",
+                "FILTER",
+                "INFO",
+                "FORMAT",
+                *samples,
+            ]
+        ),
+    ]
+    sample_values = [
+        "0|0:0,0:1,0,0:0" if index % 2 == 0 else "0|1:0,1:0,1,0:1"
+        for index in range(len(samples))
+    ]
+    lines.append(
+        "\t".join(
+            [
+                "chr1",
+                "39119",
+                "chr1:39119:T:<CN2>",
+                "T",
+                "<CN2>",
+                ".",
+                "PASS",
+                "AF=0.03",
+                "GT:HDS:GP:DS",
+                *sample_values,
+            ]
+        )
+    )
+    path.write_text("\n".join(lines) + "\n")
+
+
 def compress_vcf(source, destination):
     subprocess.run(
         [
@@ -344,6 +400,9 @@ class WorkflowIntegrationTest(unittest.TestCase):
             self.assertFalse(
                 (output / "intermediate" / "intersection" / "chrX").exists()
             )
+            merge_inputs = output / "intermediate" / "merge_input"
+            self.assertEqual(list(merge_inputs.rglob("*.bcf")), [])
+            self.assertEqual(list(merge_inputs.rglob("*.bcf.csi")), [])
 
     def test_nonshared_variants_are_excluded(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
@@ -390,6 +449,59 @@ class WorkflowIntegrationTest(unittest.TestCase):
                     "cohort_b\t2\t1\t1\t0.500000",
                 ],
             )
+
+    def test_conflicting_annotations_are_removed_before_merge(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            config, output, source_vcfs = build_test_project(root)
+
+            cohort_a_vcf = root / "cohort_a.symbolic.vcf"
+            cohort_b_vcf = root / "cohort_b.symbolic.vcf"
+            write_symbolic_vcf(
+                cohort_a_vcf,
+                ["duplicate", "cohort_a_sample"],
+                flexible_numbers=False,
+            )
+            write_symbolic_vcf(
+                cohort_b_vcf,
+                ["duplicate", "cohort_b_sample"],
+                flexible_numbers=True,
+            )
+            source_vcfs[0].unlink()
+            source_vcfs[2].unlink()
+            compress_vcf(cohort_a_vcf, source_vcfs[0])
+            compress_vcf(cohort_b_vcf, source_vcfs[2])
+
+            merged_vcf = output / "by_chromosome" / "chr1.vcf.gz"
+            result = run_workflow(config, [merged_vcf])
+            if result.returncode != 0:
+                self.fail(result.stdout + result.stderr)
+
+            header = subprocess.run(
+                [BCFTOOLS, "view", "--header-only", str(merged_vcf)],
+                check=True,
+                text=True,
+                capture_output=True,
+            ).stdout
+            self.assertIn("##FORMAT=<ID=GT,", header)
+            self.assertNotIn("##FORMAT=<ID=DS,", header)
+            self.assertNotIn("##FORMAT=<ID=GP,", header)
+            self.assertNotIn("##FORMAT=<ID=HDS,", header)
+            self.assertNotIn("##INFO=<ID=AF,", header)
+
+            record = subprocess.run(
+                [BCFTOOLS, "view", "--no-header", str(merged_vcf)],
+                check=True,
+                text=True,
+                capture_output=True,
+            ).stdout.strip().split("\t")
+            self.assertEqual(
+                record[0:5],
+                ["chr1", "39119", "chr1:39119:T:<CN2>", "T", "<CN2>"],
+            )
+            self.assertEqual(record[7], ".")
+            self.assertEqual(record[8], "GT")
+            self.assertEqual(record[9:], ["0|0", "0|1", "0|0", "0|1"])
 
     def test_empty_intersection_is_rejected(self):
         with tempfile.TemporaryDirectory() as temporary_directory:

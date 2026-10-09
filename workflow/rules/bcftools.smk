@@ -17,6 +17,14 @@ INTERSECTION_REPORT_PATTERN = str(
     / "{chromosome}.tsv"
 )
 
+MERGE_INPUT_BCF_PATTERN = str(
+    Path(OUTPUT_DIRECTORY)
+    / "intermediate"
+    / "merge_input"
+    / "{chromosome}"
+    / "{cohort_index}.bcf"
+)
+
 SAMPLE_EXCLUSION_LIST = str(
     Path(OUTPUT_DIRECTORY) / "intermediate" / "sample_exclusions.txt"
 )
@@ -52,6 +60,27 @@ def intersection_vcfs(wildcards):
         INTERSECTION_DIRECTORY_PATTERN.format(chromosome=wildcards.chromosome)
     )
     return [str(directory / f"{index:04d}.vcf.gz") for index in range(len(COHORTS))]
+
+
+def intersection_vcf(wildcards):
+    directory = Path(
+        INTERSECTION_DIRECTORY_PATTERN.format(chromosome=wildcards.chromosome)
+    )
+    return str(directory / f"{wildcards.cohort_index}.vcf.gz")
+
+
+def merge_input_bcfs(wildcards):
+    return [
+        MERGE_INPUT_BCF_PATTERN.format(
+            chromosome=wildcards.chromosome,
+            cohort_index=f"{index:04d}",
+        )
+        for index in range(len(COHORTS))
+    ]
+
+
+def merge_input_indexes(wildcards):
+    return [f"{bcf}.csi" for bcf in merge_input_bcfs(wildcards)]
 
 
 rule index_vcf:
@@ -127,14 +156,48 @@ rule summarize_intersection:
         "../scripts/summarize_variant_intersection.py"
 
 
+rule prepare_merge_vcf:
+    input:
+        intersection=INTERSECTION_DIRECTORY_PATTERN
+    output:
+        bcf=temp(MERGE_INPUT_BCF_PATTERN),
+        index=temp(f"{MERGE_INPUT_BCF_PATTERN}.csi"),
+    params:
+        vcf=intersection_vcf
+    threads:
+        config["resources"]["prepare_merge_vcf"]["threads"]
+    resources:
+        mem_mb=config["resources"]["prepare_merge_vcf"]["mem_mb"]
+    log:
+        str(
+            Path(OUTPUT_DIRECTORY)
+            / "logs"
+            / "prepare_merge"
+            / "{chromosome}"
+            / "{cohort_index}.log"
+        )
+    envmodules:
+        *BCFTOOLS_MODULES
+    shell:
+        """
+        bcftools annotate \
+            --remove 'INFO,^FORMAT/GT' \
+            --output-type b \
+            --write-index=csi \
+            --threads {threads} \
+            --output {output.bcf:q} \
+            {params.vcf:q} \
+            2> {log:q}
+        """
+
+
 rule merge_chromosome:
     input:
-        intersection=INTERSECTION_DIRECTORY_PATTERN,
+        bcfs=merge_input_bcfs,
+        indexes=merge_input_indexes,
         report=INTERSECTION_REPORT_PATTERN,
     output:
         vcf=MERGED_VCF_PATTERN
-    params:
-        vcfs=intersection_vcfs
     threads:
         config["resources"]["merge_chromosome"]["threads"]
     resources:
@@ -147,10 +210,11 @@ rule merge_chromosome:
         """
         bcftools merge \
             --force-samples \
+            --merge none \
             --output-type z \
             --threads {threads} \
             --output {output.vcf:q} \
-            {params.vcfs:q} \
+            {input.bcfs:q} \
             2> {log:q}
         """
 
@@ -168,6 +232,10 @@ if HAS_SAMPLE_EXCLUSIONS:
         params:
             cohorts=COHORTS,
             exclusion_cohorts=EXCLUSION_COHORTS,
+        threads:
+            config["resources"]["prepare_sample_exclusions"]["threads"]
+        resources:
+            mem_mb=config["resources"]["prepare_sample_exclusions"]["mem_mb"]
         log:
             str(Path(OUTPUT_DIRECTORY) / "logs" / "sample_exclusions.prepare.log")
         envmodules:

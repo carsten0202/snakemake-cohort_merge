@@ -44,32 +44,40 @@ modules:
 resources:
   index_vcf:
     threads: 2
-    mem_mb: 2000
+    mem_mb: 8000
 
   intersect_variants:
-    threads: 4
-    mem_mb: 8000
+    threads: 8
+    mem_mb: 32000
 
   summarize_intersection:
-    threads: 1
-    mem_mb: 2000
-
-  merge_chromosome:
-    threads: 4
+    threads: 2
     mem_mb: 8000
 
-  concatenate_chromosomes:
-    threads: 4
-    mem_mb: 8000
-
-  exclude_samples:
-    threads: 4
-    mem_mb: 8000
-
-  convert_vcf_to_plink:
+  prepare_merge_vcf:
     threads: 4
     mem_mb: 16000
 
-  run_quick_pcair:
+  prepare_sample_exclusions:
+    threads: 2
+    mem_mb: 8000
+
+  merge_chromosome:
+    threads: 12
+    mem_mb: 128000
+
+  concatenate_chromosomes:
     threads: 8
+    mem_mb: 32000
+
+  exclude_samples:
+    threads: 8
+    mem_mb: 32000
+
+  convert_vcf_to_plink:
+    threads: 12
     mem_mb: 64000
+
+  run_quick_pcair:
+    threads: 16
+    mem_mb: 256000
