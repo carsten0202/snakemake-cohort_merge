@@ -28,10 +28,10 @@ Run the synthetic integration tests:
 python -m unittest discover -s tests/integration -v
 ```
 
-The tests require `bcftools` to be available on `PATH`. PLINK and quick-pcair
-are represented by local test doubles, so their production modules are not
-required. The tests use temporary, synthetic VCFs, including cohorts with
-differing variants, and do not access real cohort data.
+The tests require `bcftools` and `Rscript` to be available on `PATH`. PLINK and
+quick-pcair are represented by local test doubles, so their production modules
+are not required. The tests use temporary, synthetic VCFs, including cohorts
+with differing variants, and do not access real cohort data.
 
 The example configuration contains placeholder paths and therefore cannot
 construct a complete workflow DAG. It can still be used for configuration and
@@ -192,6 +192,42 @@ The quick-pcair analysis includes:
 The default quick-pcair memory request is 256 GB because its kinship matrix can
 grow quadratically with sample count. Override the rule resources in the
 super-cohort configuration when the cohort requires a larger allocation.
+The default quick-pcair runtime request is 11,520 minutes, or eight days.
+
+## Related sample report
+
+The workflow combines the KING-robust and ancestry-adjusted PC-Relate estimates
+into:
+
+```text
+<output_directory>/<super_cohort>/analysis/pcair/<super_cohort>.related_pairs.tsv
+```
+
+The report contains one row per unordered sample pair and the columns
+`sample_1`, `sample_2`, `king_kinship`, `king_relationship`,
+`pcrelate_kinship`, and `pcrelate_relationship`. A pair is included when either
+kinship estimate is at least `relatedness.minimum_kinship`. The default is
+`0.0442`, corresponding to third-degree relatives or closer. Override it in a
+super-cohort configuration with:
+
+```yaml
+relatedness:
+  minimum_kinship: 0.0442
+```
+
+Relationship classes are assigned independently to each estimate using these
+kinship boundaries:
+
+- `>= 0.354`: duplicate or monozygotic twin.
+- `>= 0.177`: first degree.
+- `>= 0.0884`: second degree.
+- `>= 0.0442`: third degree.
+- `< 0.0442`: distant or unrelated.
+
+The classes are inferred degree ranges, not definitive pedigree assignments.
+For example, kinship alone does not distinguish a parent-child pair from full
+siblings. KING and PC-Relate can assign different classes because PC-Relate
+adjusts its estimates for ancestry.
 
 ## Outputs
 
@@ -213,7 +249,8 @@ For a super-cohort named `Glostrup`, the workflow produces:
     |   |   |-- Glostrup.pcair_1v2.png
     |   |   |-- Glostrup.pcair_3v4.png
     |   |   |-- Glostrup.pcrelate.RData
-    |   |   `-- Glostrup.pcrelate_1v2.png
+    |   |   |-- Glostrup.pcrelate_1v2.png
+    |   |   `-- Glostrup.related_pairs.tsv
     |   `-- plink/
     |       |-- Glostrup.bed
     |       |-- Glostrup.bim
