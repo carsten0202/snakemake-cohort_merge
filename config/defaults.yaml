@@ -41,6 +41,9 @@ modules:
     - R/4.4.2
     - quick-pcair/1.1.0
 
+relatedness:
+  minimum_kinship: 0.0442
+
 resources:
   index_vcf:
     threads: 2
@@ -81,3 +84,8 @@ resources:
   run_quick_pcair:
     threads: 16
     mem_mb: 256000
+    runtime: 11520
+
+  export_relatedness:
+    threads: 1
+    mem_mb: 64000
