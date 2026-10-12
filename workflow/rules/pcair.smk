@@ -60,7 +60,8 @@ rule run_quick_pcair:
     threads:
         config["resources"]["run_quick_pcair"]["threads"]
     resources:
-        mem_mb=config["resources"]["run_quick_pcair"]["mem_mb"]
+        mem_mb=config["resources"]["run_quick_pcair"]["mem_mb"],
+        runtime=config["resources"]["run_quick_pcair"]["runtime"],
     log:
         str(Path(OUTPUT_DIRECTORY) / "logs" / "quick_pcair.log")
     envmodules:
@@ -75,3 +76,21 @@ rule run_quick_pcair:
             --threads {threads} \
             > {log:q} 2>&1
         """
+
+
+rule export_relatedness:
+    input:
+        king_matrix=f"{PCAIR_PREFIX}.KINGkinship.tsv",
+        pcrelate_data=f"{PCAIR_PREFIX}.pcrelate.RData",
+    output:
+        report=RELATEDNESS_REPORT,
+    params:
+        minimum_kinship=config["relatedness"]["minimum_kinship"],
+    threads:
+        config["resources"]["export_relatedness"]["threads"]
+    resources:
+        mem_mb=config["resources"]["export_relatedness"]["mem_mb"]
+    envmodules:
+        *PCAIR_MODULES
+    script:
+        "../scripts/export_relatedness.R"
