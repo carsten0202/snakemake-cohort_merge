@@ -12,6 +12,7 @@ required:
   - input
   - cohorts
   - modules
+  - relatedness
   - resources
 
 properties:
@@ -58,6 +59,18 @@ properties:
       quick_pcair:
         $ref: '#/$defs/moduleList'
 
+  relatedness:
+    type: object
+    additionalProperties: false
+    required:
+      - minimum_kinship
+    properties:
+      minimum_kinship:
+        type: number
+        minimum: 0
+        maximum: 0.5
+        description: Minimum KING or PC-Relate kinship for reporting a pair.
+
   resources:
     type: object
     additionalProperties: false
@@ -72,6 +85,7 @@ properties:
       - exclude_samples
       - convert_vcf_to_plink
       - run_quick_pcair
+      - export_relatedness
     properties:
       index_vcf:
         $ref: '#/$defs/ruleResources'
@@ -92,6 +106,8 @@ properties:
       convert_vcf_to_plink:
         $ref: '#/$defs/ruleResources'
       run_quick_pcair:
+        $ref: '#/$defs/ruleResources'
+      export_relatedness:
         $ref: '#/$defs/ruleResources'
 
   cohorts:
@@ -125,6 +141,10 @@ $defs:
       mem_mb:
         type: integer
         minimum: 1
+      runtime:
+        type: integer
+        minimum: 1
+        description: Optional walltime in minutes.
 
   vcfPattern:
     type: string
