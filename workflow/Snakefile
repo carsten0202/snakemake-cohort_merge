@@ -25,6 +25,7 @@ FINAL_VCF = str(Path(OUTPUT_DIRECTORY) / f"{SUPER_COHORT}.vcf.gz")
 ANALYSIS_DIRECTORY = Path(OUTPUT_DIRECTORY) / "analysis"
 PLINK_PREFIX = str(ANALYSIS_DIRECTORY / "plink" / SUPER_COHORT)
 PCAIR_PREFIX = str(ANALYSIS_DIRECTORY / "pcair" / SUPER_COHORT)
+RELATEDNESS_REPORT = f"{PCAIR_PREFIX}.related_pairs.tsv"
 
 PLINK_OUTPUTS = [
     f"{PLINK_PREFIX}.bed",
@@ -53,6 +54,7 @@ rule all:
         f"{FINAL_VCF}.tbi",
         PLINK_OUTPUTS,
         PCAIR_OUTPUTS,
+        RELATEDNESS_REPORT,
 
 
 include: "rules/bcftools.smk"
