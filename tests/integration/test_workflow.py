@@ -10,6 +10,7 @@ from pathlib import Path
 
 REPOSITORY = Path(__file__).resolve().parents[2]
 BCFTOOLS = shutil.which("bcftools")
+RSCRIPT = shutil.which("Rscript")
 
 
 def write_vcf(path, chromosome, records, samples):
@@ -248,6 +249,7 @@ with open(os.environ["FAKE_TOOL_CALLS"], "a") as handle:
     quick_pcair.write_text(
         """#!/usr/bin/env python3
 import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -268,6 +270,31 @@ suffixes = (
 )
 for suffix in suffixes:
     Path(f"{prefix}{suffix}").touch()
+Path(f"{prefix}.KINGkinship.tsv").write_text(
+    " duplicate cohort_a_sample 2:duplicate cohort_b_sample\\n"
+    "duplicate 0.5 0.354 0.177 0.0884\\n"
+    "cohort_a_sample 0.354 0.5 0.0442 0.02\\n"
+    "2:duplicate 0.177 0.0442 0.5 0.01\\n"
+    "cohort_b_sample 0.0884 0.02 0.01 0.5\\n"
+)
+subprocess.run(
+    [
+        "Rscript",
+        "-e",
+        (
+            "args <- commandArgs(TRUE); "
+            "mypcrelate <- list(kinBtwn=data.frame("
+            "ID1=c('duplicate','duplicate','duplicate','cohort_a_sample',"
+            "'cohort_a_sample','2:duplicate'),"
+            "ID2=c('cohort_a_sample','2:duplicate','cohort_b_sample',"
+            "'2:duplicate','cohort_b_sample','cohort_b_sample'),"
+            "kin=c(0.36,0.17,0.04,0.03,0.05,0.01))); "
+            "save(mypcrelate, file=args[1])"
+        ),
+        f"{prefix}.pcrelate.RData",
+    ],
+    check=True,
+)
 with open(os.environ["FAKE_TOOL_CALLS"], "a") as handle:
     handle.write("quick-pcair " + " ".join(args) + "\\n")
 """
@@ -303,7 +330,10 @@ def run_workflow(config, targets=None, env=None):
     )
 
 
-@unittest.skipUnless(BCFTOOLS, "bcftools is required for integration tests")
+@unittest.skipUnless(
+    BCFTOOLS and RSCRIPT,
+    "bcftools and Rscript are required for integration tests",
+)
 class WorkflowIntegrationTest(unittest.TestCase):
     def test_complete_workflow(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
@@ -662,6 +692,25 @@ class WorkflowIntegrationTest(unittest.TestCase):
             for suffix in pcair_suffixes:
                 self.assertTrue(Path(f"{pcair_prefix}{suffix}").is_file())
 
+            relatedness_report = Path(f"{pcair_prefix}.related_pairs.tsv")
+            self.assertEqual(
+                relatedness_report.read_text().splitlines(),
+                [
+                    "sample_1\tsample_2\tking_kinship\tking_relationship\t"
+                    "pcrelate_kinship\tpcrelate_relationship",
+                    "duplicate\tcohort_a_sample\t0.354\tduplicate_or_mz_twin\t"
+                    "0.36\tduplicate_or_mz_twin",
+                    "duplicate\t2:duplicate\t0.177\tfirst_degree\t0.17\t"
+                    "second_degree",
+                    "duplicate\tcohort_b_sample\t0.0884\tsecond_degree\t0.04\t"
+                    "distant_or_unrelated",
+                    "cohort_a_sample\tcohort_b_sample\t0.02\t"
+                    "distant_or_unrelated\t0.05\tthird_degree",
+                    "cohort_a_sample\t2:duplicate\t0.0442\tthird_degree\t0.03\t"
+                    "distant_or_unrelated",
+                ],
+            )
+
             calls = call_log.read_text().splitlines()
             self.assertEqual(len(calls), 2)
             self.assertIn("--vcf-require-gt", calls[0])
@@ -671,6 +720,35 @@ class WorkflowIntegrationTest(unittest.TestCase):
             self.assertIn("--max-alleles 2", calls[0])
             self.assertIn(f"--plink {plink_prefix}", calls[1])
             self.assertIn(f"--output {pcair_prefix}", calls[1])
+
+    def test_empty_relatedness_report_has_header(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            config, output, _ = build_test_project(root)
+            config_data = json.loads(config.read_text())
+            config_data["relatedness"] = {"minimum_kinship": 0.5}
+            config.write_text(json.dumps(config_data))
+
+            bin_directory = root / "bin"
+            bin_directory.mkdir()
+            call_log = root / "analysis_calls.log"
+            env = write_fake_analysis_tools(bin_directory, call_log)
+
+            result = run_workflow(config, env=env)
+            if result.returncode != 0:
+                self.fail(result.stdout + result.stderr)
+
+            report = (
+                output
+                / "analysis"
+                / "pcair"
+                / "Glostrup.related_pairs.tsv"
+            )
+            self.assertEqual(
+                report.read_text(),
+                "sample_1\tsample_2\tking_kinship\tking_relationship\t"
+                "pcrelate_kinship\tpcrelate_relationship\n",
+            )
 
 
 if __name__ == "__main__":
