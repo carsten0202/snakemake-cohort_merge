@@ -83,7 +83,7 @@ resources:
 
   run_quick_pcair:
     threads: 16
-    mem_mb: 256000
+    mem_mb: 524288
     runtime: 11520
 
   export_relatedness:
