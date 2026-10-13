@@ -1,5 +1,9 @@
 BCFTOOLS_MODULES = tuple(config["modules"]["bcftools"])
 
+
+def bcftools_workers(threads, output_count=1):
+    return max((threads - 1) // output_count, 0)
+
 MERGED_VCF_PATTERN = str(
     Path(OUTPUT_DIRECTORY)
     / "by_chromosome"
@@ -88,6 +92,8 @@ rule index_vcf:
         "{vcf_path}.vcf.gz"
     output:
         "{vcf_path}.vcf.gz.tbi"
+    params:
+        workers=lambda wildcards, threads: bcftools_workers(threads)
     threads:
         config["resources"]["index_vcf"]["threads"]
     resources:
@@ -98,7 +104,7 @@ rule index_vcf:
         """
         bcftools index \
             --tbi \
-            --threads {threads} \
+            --threads {params.workers} \
             --output {output:q} \
             {input:q}
         """
@@ -113,6 +119,9 @@ rule intersect_variants:
     params:
         nfiles=len(COHORTS),
         write=",".join(str(index) for index in range(1, len(COHORTS) + 1)),
+        workers=lambda wildcards, threads: bcftools_workers(
+            threads, len(COHORTS)
+        ),
     threads:
         config["resources"]["intersect_variants"]["threads"]
     resources:
@@ -129,7 +138,7 @@ rule intersect_variants:
             --write {params.write} \
             --output-type z \
             --write-index=tbi \
-            --threads {threads} \
+            --threads {params.workers} \
             --prefix {output.intersection:q} \
             {input.vcfs:q} \
             2> {log:q}
@@ -163,7 +172,8 @@ rule prepare_merge_vcf:
         bcf=temp(MERGE_INPUT_BCF_PATTERN),
         index=temp(f"{MERGE_INPUT_BCF_PATTERN}.csi"),
     params:
-        vcf=intersection_vcf
+        vcf=intersection_vcf,
+        workers=lambda wildcards, threads: bcftools_workers(threads),
     threads:
         config["resources"]["prepare_merge_vcf"]["threads"]
     resources:
@@ -184,7 +194,7 @@ rule prepare_merge_vcf:
             --remove 'INFO,^FORMAT/GT' \
             --output-type b \
             --write-index=csi \
-            --threads {threads} \
+            --threads {params.workers} \
             --output {output.bcf:q} \
             {params.vcf:q} \
             2> {log:q}
@@ -197,7 +207,10 @@ rule merge_chromosome:
         indexes=merge_input_indexes,
         report=INTERSECTION_REPORT_PATTERN,
     output:
-        vcf=MERGED_VCF_PATTERN
+        vcf=MERGED_VCF_PATTERN,
+        index=f"{MERGED_VCF_PATTERN}.tbi",
+    params:
+        workers=lambda wildcards, threads: bcftools_workers(threads)
     threads:
         config["resources"]["merge_chromosome"]["threads"]
     resources:
@@ -212,11 +225,15 @@ rule merge_chromosome:
             --force-samples \
             --merge none \
             --output-type z \
-            --threads {threads} \
+            --write-index=tbi \
+            --threads {params.workers} \
             --output {output.vcf:q} \
             {input.bcfs:q} \
             2> {log:q}
         """
+
+
+ruleorder: merge_chromosome > index_vcf
 
 
 if HAS_SAMPLE_EXCLUSIONS:
@@ -251,6 +268,8 @@ if HAS_SAMPLE_EXCLUSIONS:
         output:
             bcf=temp(UNFILTERED_BCF),
             index=temp(f"{UNFILTERED_BCF}.csi"),
+        params:
+            workers=lambda wildcards, threads: bcftools_workers(threads)
         threads:
             config["resources"]["concatenate_chromosomes"]["threads"]
         resources:
@@ -264,7 +283,7 @@ if HAS_SAMPLE_EXCLUSIONS:
             bcftools concat \
                 --output-type b \
                 --write-index=csi \
-                --threads {threads} \
+                --threads {params.workers} \
                 --output {output.bcf:q} \
                 {input.vcfs:q} \
                 2> {log:q}
@@ -277,7 +296,10 @@ if HAS_SAMPLE_EXCLUSIONS:
             index=f"{UNFILTERED_BCF}.csi",
             samples=SAMPLE_EXCLUSION_LIST,
         output:
-            vcf=FINAL_VCF
+            vcf=FINAL_VCF,
+            index=f"{FINAL_VCF}.tbi",
+        params:
+            workers=lambda wildcards, threads: bcftools_workers(threads)
         threads:
             config["resources"]["exclude_samples"]["threads"]
         resources:
@@ -293,26 +315,34 @@ if HAS_SAMPLE_EXCLUSIONS:
                     --force-samples \
                     --samples-file ^{input.samples:q} \
                     --output-type z \
-                    --threads {threads} \
+                    --write-index=tbi \
+                    --threads {params.workers} \
                     --output {output.vcf:q} \
                     {input.bcf:q} \
                     2> {log:q}
             else
                 bcftools view \
                     --output-type z \
-                    --threads {threads} \
+                    --write-index=tbi \
+                    --threads {params.workers} \
                     --output {output.vcf:q} \
                     {input.bcf:q} \
                     2> {log:q}
             fi
             """
+
+
+    ruleorder: exclude_samples > index_vcf
 else:
     rule concatenate_chromosomes:
         input:
             vcfs=expand(MERGED_VCF_PATTERN, chromosome=CHROMOSOMES),
             indexes=expand(f"{MERGED_VCF_PATTERN}.tbi", chromosome=CHROMOSOMES),
         output:
-            vcf=FINAL_VCF
+            vcf=FINAL_VCF,
+            index=f"{FINAL_VCF}.tbi",
+        params:
+            workers=lambda wildcards, threads: bcftools_workers(threads)
         threads:
             config["resources"]["concatenate_chromosomes"]["threads"]
         resources:
@@ -325,8 +355,12 @@ else:
             """
             bcftools concat \
                 --output-type z \
-                --threads {threads} \
+                --write-index=tbi \
+                --threads {params.workers} \
                 --output {output.vcf:q} \
                 {input.vcfs:q} \
                 2> {log:q}
             """
+
+
+    ruleorder: concatenate_chromosomes > index_vcf

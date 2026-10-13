@@ -50,12 +50,21 @@ snakemake \
 - Canonical chromosome order.
 - The default VCF filename pattern.
 - Environment modules.
-- Initial thread and memory requirements.
+- Initial thread and memory requests.
 
 A super-cohort configuration supplies its name, shared output root, and cohort
 input directories. The workflow writes all artifacts beneath a directory named
 for the super-cohort. Values in the super-cohort configuration recursively
 override the defaults.
+
+The resource defaults are scheduling starting points rather than hardware
+requirements. Override them for a deployment based on its executor, available
+hardware, and observed resource usage. A rule's `threads` value is the total
+number of CPUs available to the job. For BCFtools commands, the workflow
+derives the `--threads` argument from this allocation because BCFtools counts
+compression workers separately from its main thread. `bcftools isec` creates a
+compression worker pool for each selected output, so its workers are divided
+across the cohort outputs.
 
 Real super-cohort configurations under `config/super_cohorts/` are ignored by
 Git. Tracked `*.example.yaml` files document their expected structure without
@@ -109,6 +118,8 @@ global exclusion would be ambiguous.
 
 Each input VCF should have a matching `.vcf.gz.tbi`. Missing or stale indexes
 are generated beside the source VCF, so cohort directories must be writable.
+Compressed VCF and BCF files produced by the workflow are indexed by their
+producing BCFtools command, avoiding a separate indexing pass.
 
 ## Variant intersection
 
@@ -189,9 +200,11 @@ The quick-pcair analysis includes:
 - PC-AiR using the LD-pruned SNP set.
 - PC-Relate using the first two PC-AiR components.
 
-The default quick-pcair memory request is 256 GB because its kinship matrix can
-grow quadratically with sample count. Override the rule resources in the
-super-cohort configuration when the cohort requires a larger allocation.
+The default quick-pcair memory request is 524,288 MB, approximately 512 GiB.
+KING and PC-Relate resource requirements can grow quadratically with sample
+count, so this default does not guarantee that every cohort will fit. Override
+the rule resources in the super-cohort configuration when observed usage or
+deployment limits require it.
 The default quick-pcair runtime request is 11,520 minutes, or eight days.
 
 ## Related sample report
@@ -283,7 +296,7 @@ For a super-cohort named `Glostrup`, the workflow produces:
 
 Chromosome-level outputs are retained after final concatenation.
 
-## Server execution
+## Execution
 
 Production rules load these environment modules in order:
 
@@ -302,7 +315,22 @@ Each rule loads only the modules it needs. The quick-pcair rule loads
 `gcc/13.2.0`, `openjdk/20.0.0`, `R/4.4.2`, and `quick-pcair/1.1.0` in
 prerequisite order.
 
-Run Glostrup with:
+Scheduler configuration is intentionally kept outside this repository because
+executor plugins, accounts, partitions, and submission policies are
+deployment-specific. When using a scheduler, supply the appropriate external
+Snakemake profile:
+
+```bash
+snakemake \
+    --profile /path/to/profile \
+    --configfile config/super_cohorts/Glostrup.yaml \
+    --use-envmodules
+```
+
+The profile should map Snakemake's `threads`, `mem_mb`, and `runtime` resources
+to the corresponding scheduler requests.
+
+For direct execution without a scheduler:
 
 ```bash
 snakemake \
@@ -312,8 +340,7 @@ snakemake \
 ```
 
 Snakemake purges inherited modules before loading the modules declared by each
-rule. A scheduler-specific execution profile can be added once the server
-scheduler is known.
+rule.
 
 ## Layout
 
