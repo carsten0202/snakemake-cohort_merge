@@ -62,9 +62,17 @@ resources:
     threads: 1
     mem_mb: 8000
 
-  deduplicate_vcf:
+  prepare_final_samples:
+    threads: 1
+    mem_mb: 8000
+
+  export_chromosome_vcf:
     threads: 4
     mem_mb: 32000
+
+  export_final_plink:
+    threads: 4
+    mem_mb: 64000
 
   index_vcf:
     threads: 2

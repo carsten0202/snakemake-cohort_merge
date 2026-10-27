@@ -241,13 +241,24 @@ from pathlib import Path
 args = sys.argv[1:]
 prefix = Path(args[args.index("--out") + 1])
 prefix.parent.mkdir(parents=True, exist_ok=True)
-for suffix in (".bed", ".bim", ".fam", ".log"):
+for suffix in (".bed", ".bim", ".log"):
     Path(f"{prefix}{suffix}").touch()
-samples = subprocess.run(
-    ["bcftools", "query", "--list-samples", args[args.index("--vcf") + 1]],
-    check=True, text=True, capture_output=True,
-).stdout
-Path(f"{prefix}.fam").write_text(samples)
+if "--bcf" in args:
+    assert "--double-id" in args and "--vcf-require-gt" in args
+    samples = subprocess.run(
+        ["bcftools", "query", "--list-samples", args[args.index("--bcf") + 1]],
+        check=True, text=True, capture_output=True,
+    ).stdout.splitlines()
+    families = [[sample, sample, "0", "0", "0", "-9"] for sample in samples]
+else:
+    source = args[args.index("--bfile") + 1]
+    families = [line.split() for line in Path(source + ".fam").read_text().splitlines()]
+    keep = [tuple(line.split()) for line in Path(args[args.index("--keep") + 1]).read_text().splitlines()]
+    assert args[args.index("--indiv-sort") + 1] == "file"
+    by_id = {tuple(row[:2]): row for row in families}
+    assert set(keep) <= by_id.keys()
+    families = [by_id[key] for key in keep]
+Path(f"{prefix}.fam").write_text("".join(" ".join(row) + "\\n" for row in families))
 with open(os.environ["FAKE_TOOL_CALLS"], "a") as handle:
     handle.write("plink2 " + " ".join(args) + "\\n")
 """
@@ -287,7 +298,7 @@ king_lines = (
     "cohort_b_sample 0.0884 0.02 0.01 0.5\\n"
 ).splitlines()
 fam = args[args.index("--plink") + 1] + ".fam"
-samples = Path(fam).read_text().splitlines()
+samples = [line.split()[1] for line in Path(fam).read_text().splitlines()]
 all_samples = king_lines[0].split()
 indices = [all_samples.index(sample) for sample in samples]
 king_rows = [" " + " ".join(samples)]
@@ -309,7 +320,7 @@ subprocess.run(
             "kin=c(0.36,0.17,0.04,0.03,0.05,0.01))); "
             "if (nzchar(args[3])) mypcrelate$kinBtwn$kin <- "
             "as.numeric(strsplit(args[3], ',', fixed=TRUE)[[1]]); "
-            "ids <- readLines(args[2]); "
+            "ids <- read.table(args[2], colClasses='character')[[2]]; "
             "mypcrelate$kinBtwn <- subset(mypcrelate$kinBtwn, ID1 %in% ids & ID2 %in% ids); "
             "save(mypcrelate, file=args[1])"
         ),
@@ -354,11 +365,51 @@ def run_workflow(config, targets=None, env=None):
     )
 
 
+def deployed_vcf(output, chromosome="chr1"):
+    return output / "deliverables" / "vcf" / f"{chromosome}.vcf.gz"
+
+
 @unittest.skipUnless(
     BCFTOOLS and RSCRIPT,
     "bcftools and Rscript are required for integration tests",
 )
 class WorkflowIntegrationTest(unittest.TestCase):
+    def assert_deployment(self, output, expected_samples):
+        self.assertEqual(
+            (output / "qc" / "final_samples.txt").read_text().splitlines(),
+            expected_samples,
+        )
+        for chromosome, count in (("chr1", 2), ("chrX", 1)):
+            vcf = deployed_vcf(output, chromosome)
+            samples = subprocess.run(
+                [BCFTOOLS, "query", "--list-samples", str(vcf)],
+                check=True, text=True, capture_output=True,
+            ).stdout.splitlines()
+            self.assertEqual(samples, expected_samples)
+            stats = subprocess.run(
+                [BCFTOOLS, "index", "--stats", str(vcf)],
+                check=True, text=True, capture_output=True,
+            ).stdout.splitlines()
+            self.assertEqual(stats, [f"{chromosome}\t.\t{count}"])
+        fam = output / "deliverables" / "plink" / "Glostrup.fam"
+        families = [line.split() for line in fam.read_text().splitlines()]
+        self.assertEqual([row[0] for row in families], expected_samples)
+        self.assertEqual([row[1] for row in families], expected_samples)
+        pcair = output / "deliverables" / "pcair"
+        self.assertTrue((pcair / "Glostrup.pcrelate.RData").is_file())
+        self.assertTrue((pcair / "Glostrup.related_pairs.tsv").is_file())
+        # No retained combined genotype files or analysis datasets.
+        intermediate = output / "intermediate"
+        self.assertEqual([path for path in intermediate.rglob("*") if path.is_file()], [])
+        self.assertFalse((output / "analysis").exists())
+        self.assertFalse((output / "by_chromosome").exists())
+        self.assertFalse((output / "Glostrup.vcf.gz").exists())
+        self.assertFalse((output / "Glostrup.deduplicated.vcf.gz").exists())
+        self.assertEqual(
+            sorted(path.name for path in (output / "deliverables" / "vcf").iterdir()),
+            ["chr1.vcf.gz", "chr1.vcf.gz.tbi", "chrX.vcf.gz", "chrX.vcf.gz.tbi"],
+        )
+
     def test_manifest_handles_existing_prefixed_ids(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -467,25 +518,26 @@ class WorkflowIntegrationTest(unittest.TestCase):
                     )})
                 self.assertEqual((qc / "sample_decisions.tsv").read_text(), expected_decisions)
 
-                original = output / "Glostrup.vcf.gz"
-                filtered = output / "Glostrup.deduplicated.vcf.gz"
-                samples = subprocess.run(
-                    [BCFTOOLS, "query", "--list-samples", str(filtered)],
-                    check=True, text=True, capture_output=True,
-                ).stdout.splitlines()
-                self.assertEqual(samples, [row["merged_sample_id"] for row in manifest
-                                           if row["merged_sample_id"] not in removals])
-                def query(vcf, selection):
-                    return subprocess.run(
-                        [BCFTOOLS, "query", *selection, "--format", "%CHROM\t%POS\t%REF\t%ALT[\t%GT]\n", str(vcf)],
+                samples = [row["merged_sample_id"] for row in manifest
+                           if row["merged_sample_id"] not in removals]
+                self.assert_deployment(output, samples)
+                all_samples = ["duplicate", "cohort_a_sample", "2:duplicate", "cohort_b_sample"]
+                indices = [all_samples.index(sample) for sample in samples]
+                expected = {
+                    "chr1": [(100, "A", "G", ["0/1", "0/0", "0/0", "0/1"]),
+                             (200, "C", "T", ["1/1", "0/1", "0/1", "1/1"])],
+                    "chrX": [(100, "A", "C", ["0/1", "0/0", "0/0", "0/1"])],
+                }
+                for chromosome, records in expected.items():
+                    observed = subprocess.run(
+                        [BCFTOOLS, "query", "--format", "%CHROM\t%POS\t%REF\t%ALT[\t%GT]\n",
+                         str(deployed_vcf(output, chromosome))],
                         check=True, text=True, capture_output=True,
-                    ).stdout
-                self.assertEqual(query(filtered, []), query(original, ["--samples", ",".join(samples)]))
-                stats = subprocess.run(
-                    [BCFTOOLS, "index", "--stats", str(filtered)],
-                    check=True, text=True, capture_output=True,
-                ).stdout.splitlines()
-                self.assertEqual(stats, ["chr1\t.\t2", "chrX\t.\t1"])
+                    ).stdout.splitlines()
+                    self.assertEqual(observed, [
+                        "\t".join([chromosome, str(pos), ref, alt, *[gt[i] for i in indices]])
+                        for pos, ref, alt, gt in records
+                    ])
 
     def test_deduplication_rejects_invalid_priorities(self):
         for priorities, message in [
@@ -506,6 +558,44 @@ class WorkflowIntegrationTest(unittest.TestCase):
                 self.assertNotEqual(result.returncode, 0)
                 self.assertIn(message, result.stdout + result.stderr)
 
+    def test_deployment_with_configured_exclusions_only(self):
+        for excluded in ("cohort_b_sample", "unknown_sample"):
+            with self.subTest(excluded=excluded), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                config, output, _ = build_test_project(root, exclusion_entries=[excluded])
+                bin_directory = root / "bin"
+                bin_directory.mkdir()
+                env = write_fake_analysis_tools(bin_directory, root / "calls.log")
+                result = run_workflow(config, env=env)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                expected = [sample for sample in (
+                    "duplicate", "cohort_a_sample", "2:duplicate", "cohort_b_sample"
+                ) if sample != excluded]
+                self.assert_deployment(output, expected)
+                self.assertFalse((output / "qc" / "deduplication").exists())
+
+    def test_final_sample_selection_rejects_invalid_removals(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            _, _, source_vcfs = build_test_project(root)
+            removals = root / "removals.txt"
+            for removed, message in [
+                (["unknown_sample"], "unknown analysis samples"),
+                (["duplicate", "cohort_a_sample"], "No samples remain"),
+            ]:
+                with self.subTest(removed=removed):
+                    removals.write_text("\n".join(removed) + "\n")
+                    context = SimpleNamespace(
+                        input=SimpleNamespace(analysis=source_vcfs[0], removals=[removals]),
+                        output=SimpleNamespace(samples=root / "samples.txt", plink_keep=root / "samples.keep"),
+                        log=[root / "selection.log"],
+                    )
+                    with self.assertRaisesRegex(ValueError, message):
+                        runpy.run_path(
+                            str(REPOSITORY / "workflow/scripts/prepare_final_samples.py"),
+                            init_globals={"snakemake": context},
+                        )
+
     def test_complete_workflow(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
             config, output, source_vcfs = build_test_project(
@@ -514,7 +604,7 @@ class WorkflowIntegrationTest(unittest.TestCase):
 
             result = run_workflow(
                 config,
-                [output / "Glostrup.vcf.gz.tbi"],
+                [Path(f"{deployed_vcf(output, chromosome)}.tbi") for chromosome in ("chr1", "chrX")],
             )
             if result.returncode != 0:
                 self.fail(result.stdout + result.stderr)
@@ -523,14 +613,14 @@ class WorkflowIntegrationTest(unittest.TestCase):
                 self.assertTrue(Path(f"{vcf}.tbi").is_file())
 
             chromosome_outputs = [
-                output / "by_chromosome" / "chr1.vcf.gz",
-                output / "by_chromosome" / "chrX.vcf.gz",
+                deployed_vcf(output, "chr1"),
+                deployed_vcf(output, "chrX"),
             ]
             for vcf in chromosome_outputs:
                 self.assertTrue(vcf.is_file())
                 self.assertTrue(Path(f"{vcf}.tbi").is_file())
 
-            final_vcf = output / "Glostrup.vcf.gz"
+            final_vcf = deployed_vcf(output)
             self.assertTrue(final_vcf.is_file())
             self.assertTrue(Path(f"{final_vcf}.tbi").is_file())
 
@@ -567,7 +657,6 @@ class WorkflowIntegrationTest(unittest.TestCase):
                 [
                     "chr1\t100\tA\tG",
                     "chr1\t200\tC\tT",
-                    "chrX\t100\tA\tC",
                 ],
             )
 
@@ -577,7 +666,7 @@ class WorkflowIntegrationTest(unittest.TestCase):
                 text=True,
                 capture_output=True,
             ).stdout.splitlines()
-            self.assertEqual(index_stats, ["chr1\t.\t2", "chrX\t.\t1"])
+            self.assertEqual(index_stats, ["chr1\t.\t2"])
 
             chr1_report = (
                 output / "qc" / "variant_intersection" / "chr1.tsv"
@@ -614,12 +703,12 @@ class WorkflowIntegrationTest(unittest.TestCase):
 
             result = run_workflow(
                 config,
-                [output / "Glostrup.vcf.gz.tbi"],
+                [Path(f"{deployed_vcf(output)}.tbi")],
             )
             if result.returncode != 0:
                 self.fail(result.stdout + result.stderr)
 
-            final_vcf = output / "Glostrup.vcf.gz"
+            final_vcf = deployed_vcf(output)
             records = subprocess.run(
                 [
                     BCFTOOLS,
@@ -636,7 +725,6 @@ class WorkflowIntegrationTest(unittest.TestCase):
                 records,
                 [
                     "chr1\t200\tC\tT",
-                    "chrX\t100\tA\tC",
                 ],
             )
 
@@ -673,7 +761,7 @@ class WorkflowIntegrationTest(unittest.TestCase):
             compress_vcf(cohort_a_vcf, source_vcfs[0])
             compress_vcf(cohort_b_vcf, source_vcfs[2])
 
-            merged_vcf = output / "by_chromosome" / "chr1.vcf.gz"
+            merged_vcf = deployed_vcf(output)
             result = run_workflow(config, [merged_vcf])
             if result.returncode != 0:
                 self.fail(result.stdout + result.stderr)
@@ -713,7 +801,7 @@ class WorkflowIntegrationTest(unittest.TestCase):
 
             result = run_workflow(
                 config,
-                [output / "Glostrup.vcf.gz.tbi"],
+                [Path(f"{deployed_vcf(output)}.tbi")],
             )
 
             self.assertNotEqual(result.returncode, 0)
@@ -735,12 +823,12 @@ class WorkflowIntegrationTest(unittest.TestCase):
 
             result = run_workflow(
                 config,
-                [output / "Glostrup.vcf.gz.tbi"],
+                [Path(f"{deployed_vcf(output)}.tbi")],
             )
             if result.returncode != 0:
                 self.fail(result.stdout + result.stderr)
 
-            final_vcf = output / "Glostrup.vcf.gz"
+            final_vcf = deployed_vcf(output)
             samples = subprocess.run(
                 [BCFTOOLS, "query", "--list-samples", str(final_vcf)],
                 check=True,
@@ -783,7 +871,7 @@ class WorkflowIntegrationTest(unittest.TestCase):
 
             result = run_workflow(
                 config,
-                [output / "Glostrup.vcf.gz.tbi"],
+                [Path(f"{deployed_vcf(output)}.tbi")],
             )
 
             self.assertNotEqual(result.returncode, 0)
@@ -804,7 +892,7 @@ class WorkflowIntegrationTest(unittest.TestCase):
 
             result = run_workflow(
                 config,
-                [output / "Glostrup.vcf.gz.tbi"],
+                [Path(f"{deployed_vcf(output)}.tbi")],
             )
             if result.returncode != 0:
                 self.fail(result.stdout + result.stderr)
@@ -814,7 +902,7 @@ class WorkflowIntegrationTest(unittest.TestCase):
                     BCFTOOLS,
                     "query",
                     "--list-samples",
-                    str(output / "Glostrup.vcf.gz"),
+                    str(deployed_vcf(output)),
                 ],
                 check=True,
                 text=True,
@@ -843,11 +931,11 @@ class WorkflowIntegrationTest(unittest.TestCase):
             if result.returncode != 0:
                 self.fail(result.stdout + result.stderr)
 
-            plink_prefix = output / "analysis" / "plink" / "Glostrup"
+            plink_prefix = output / "deliverables" / "plink" / "Glostrup"
             for suffix in (".bed", ".bim", ".fam", ".log"):
                 self.assertTrue(Path(f"{plink_prefix}{suffix}").is_file())
 
-            pcair_prefix = output / "analysis" / "pcair" / "Glostrup"
+            pcair_prefix = output / "deliverables" / "pcair" / "Glostrup"
             pcair_suffixes = (
                 ".gds",
                 ".KINGkinship.png",
@@ -885,14 +973,21 @@ class WorkflowIntegrationTest(unittest.TestCase):
             calls = call_log.read_text().splitlines()
             self.assertFalse((output / "Glostrup.deduplicated.vcf.gz").exists())
             self.assertFalse((output / "qc" / "deduplication").exists())
-            self.assertEqual(len(calls), 2)
-            self.assertIn("--vcf-require-gt", calls[0])
-            self.assertIn("--double-id", calls[0])
-            self.assertIn("--autosome", calls[0])
-            self.assertIn("--snps-only just-acgt", calls[0])
-            self.assertIn("--max-alleles 2", calls[0])
-            self.assertIn(f"--plink {plink_prefix}", calls[1])
-            self.assertIn(f"--output {pcair_prefix}", calls[1])
+            self.assertEqual(len(calls), 3)
+            conversion = next(call for call in calls if "--bcf" in call)
+            analysis = next(call for call in calls if call.startswith("quick-pcair"))
+            export = next(call for call in calls if "--bfile" in call)
+            self.assertIn("--vcf-require-gt", conversion)
+            self.assertIn("--double-id", conversion)
+            self.assertIn("--autosome", conversion)
+            self.assertIn("--snps-only just-acgt", conversion)
+            self.assertIn("--max-alleles 2", conversion)
+            self.assertIn(f"--plink {output / 'intermediate' / 'plink' / 'Glostrup'}", analysis)
+            self.assertIn(f"--output {pcair_prefix}", analysis)
+            self.assertIn(f"--out {plink_prefix}", export)
+            self.assert_deployment(output, [
+                "duplicate", "cohort_a_sample", "2:duplicate", "cohort_b_sample",
+            ])
 
     def test_empty_relatedness_report_has_header(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
@@ -913,7 +1008,7 @@ class WorkflowIntegrationTest(unittest.TestCase):
 
             report = (
                 output
-                / "analysis"
+                / "deliverables"
                 / "pcair"
                 / "Glostrup.related_pairs.tsv"
             )

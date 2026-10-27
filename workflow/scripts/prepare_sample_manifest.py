@@ -37,13 +37,13 @@ def main(snakemake):
             )
         manifest[merged_id] = (merged_id, original, cohort, priority)
 
-    retained = sample_ids(snakemake.input.final)
+    retained = sample_ids(snakemake.input.analysis)
     retained_set = set(retained)
     unknown = retained_set - manifest.keys()
     if unknown:
-        raise ValueError(f"Final VCF contains unmapped samples: {sorted(unknown)}")
+        raise ValueError(f"Analysis BCF contains unmapped samples: {sorted(unknown)}")
     if [sample for sample in merged if sample in retained_set] != retained:
-        raise ValueError("Final VCF sample order differs from the merged header")
+        raise ValueError("Analysis BCF sample order differs from the merged header")
 
     output = Path(snakemake.output.manifest)
     output.parent.mkdir(parents=True, exist_ok=True)

@@ -1,11 +1,12 @@
 # Cohort Merge
 
-Snakemake workflow for merging imputed cohort VCF files into a single
-mega-cohort VCF and performing kinship-aware population structure analysis.
+Snakemake workflow for merging imputed cohort VCF files into a mega-cohort
+and performing kinship-aware population structure analysis.
 
-The workflow intersects and merges cohorts independently by chromosome, then
-concatenates the chromosome-level results. Only exact variants present in every
-cohort are retained. Do not commit real cohort data or other sensitive inputs
+The workflow intersects and merges cohorts independently by chromosome. Only
+exact variants present in every cohort are retained. Final chromosome VCFs,
+PLINK files, and analysis results are bundled under `deliverables/` for copying
+to the deployed site. Do not commit real cohort data or other sensitive inputs
 to this repository.
 
 After merging, the workflow converts autosomal biallelic SNP hard calls to
@@ -161,8 +162,9 @@ duplicate-sample prefixes.
 
 When sample exclusions are configured, the workflow combines validated IDs
 from all cohort exclusion files and removes them once after chromosome
-concatenation. General duplicate-ID support remains enabled, but an ID selected
-for exclusion must be unique to its configured cohort.
+concatenation for analysis. Those exclusions also apply to every delivered
+chromosome VCF and the final PLINK dataset. General duplicate-ID support remains
+enabled, but an ID selected for exclusion must be unique to its configured cohort.
 
 ### Cohort-prioritized deduplication
 
@@ -213,12 +215,11 @@ random seed. Groups and candidates are sorted before selection, making results
 reproducible for the same inputs and seed regardless of PC-Relate row order.
 Changing the seed or group membership may change the representative.
 
-Enabling the stage adds these default workflow targets:
+Enabling the stage applies duplicate removals to the delivered chromosome VCFs
+and PLINK files, and adds these default workflow targets:
 
 ```text
 <output_directory>/<super_cohort>/
-    <super_cohort>.deduplicated.vcf.gz
-    <super_cohort>.deduplicated.vcf.gz.tbi
     qc/deduplication/
         sample_manifest.tsv
         duplicate_pairs.tsv
@@ -236,19 +237,21 @@ Enabling the stage adds these default workflow targets:
 
 When there are no qualifying pairs, the pair and decision reports contain only
 headers, the removal list is empty, and all samples are retained. Filtering
-preserves variants and the retained samples' genotype calls. The original VCF
-and analysis outputs are retained; PCs and kinship describe the sample set
-before deduplication and are not recalculated automatically.
+preserves variants and the retained samples' genotype calls. PCs and kinship
+describe the analysis sample set after configured exclusions and before
+deduplication; they are not recalculated automatically. The pre-deduplication
+genotype inputs are temporary.
 
 Stage logs are `logs/sample_manifest.log`, `logs/duplicate_pairs.log`,
-`logs/duplicate_selection.log`, and `logs/deduplication.log`. Resources can be
+`logs/duplicate_selection.log`, and `logs/final_samples.log`. Resources can be
 overridden through `resources.prepare_sample_manifest`,
 `resources.export_duplicate_pairs`, `resources.select_duplicate_representatives`,
-and `resources.deduplicate_vcf`.
+and `resources.prepare_final_samples`. Final genotype export uses
+`resources.export_chromosome_vcf` and `resources.export_final_plink`.
 
 ## Retained VCF fields
 
-The chromosome and final VCFs retain variant coordinates, IDs, alleles, quality,
+The delivered chromosome VCFs retain variant coordinates, IDs, alleles, quality,
 filters, and hard genotype calls in `FORMAT/GT`. Cohort-specific INFO fields and
 other FORMAT fields such as `DS`, `GP`, and `HDS` are intentionally discarded:
 they can have incompatible definitions and do not describe the combined cohort.
@@ -260,8 +263,8 @@ only biallelic A/C/G/T SNPs.
 
 ## Population structure analysis
 
-PLINK 2 converts the combined VCF to BED/BIM/FAM files before quick-pcair is
-run. Conversion retains autosomal, biallelic A/C/G/T SNPs and requires the VCF
+PLINK 2 converts a temporary combined BCF to analysis BED/BIM/FAM files before
+quick-pcair is run. Conversion retains autosomal, biallelic A/C/G/T SNPs and requires the
 `GT` field. Dosage fields such as `DS` and `GP` are not imported, and PLINK does
 not derive new hard calls from them. This is intentional because PLINK BED and
 quick-pcair's GDS input represent hard genotype calls rather than dosages.
@@ -270,6 +273,13 @@ VCF files do not carry PLINK pedigree information. Conversion therefore uses
 `--double-id`, assigning every sample its own family ID while retaining the VCF
 sample name as its individual ID. This prevents quick-pcair from passing one
 shared family ID for the entire cohort to SNPRelate's KING implementation.
+
+After sample selection, PLINK 2 subsets the analysis dataset using explicit
+FID/IID pairs and writes the final dataset to `deliverables/plink/`. Its sample
+IDs and order match every delivered chromosome VCF. Its variants remain the
+autosomal, biallelic SNP subset, while VCFs include all configured chromosomes
+and retained variant types. The analysis PLINK dataset and combined BCF are
+temporary and are removed after their consumers finish successfully.
 
 quick-pcair performs its own LD pruning with SNPRelate. Version 1.1.0 uses a
 10 Mb sliding window and a correlation threshold of `sqrt(0.1)`, corresponding
@@ -295,7 +305,7 @@ The workflow combines the KING-robust and ancestry-adjusted PC-Relate estimates
 into:
 
 ```text
-<output_directory>/<super_cohort>/analysis/pcair/<super_cohort>.related_pairs.tsv
+<output_directory>/<super_cohort>/deliverables/pcair/<super_cohort>.related_pairs.tsv
 ```
 
 The report contains one row per unordered sample pair and the columns
@@ -331,9 +341,7 @@ For a super-cohort named `Glostrup`, the workflow produces:
 ```text
 <output_directory>/
 `-- Glostrup/
-    |-- Glostrup.vcf.gz
-    |-- Glostrup.vcf.gz.tbi
-    |-- analysis/
+    |-- deliverables/
     |   |-- pcair/
     |   |   |-- Glostrup.gds
     |   |   |-- Glostrup.KINGkinship.png
@@ -346,21 +354,28 @@ For a super-cohort named `Glostrup`, the workflow produces:
     |   |   |-- Glostrup.pcrelate.RData
     |   |   |-- Glostrup.pcrelate_1v2.png
     |   |   `-- Glostrup.related_pairs.tsv
-    |   `-- plink/
-    |       |-- Glostrup.bed
-    |       |-- Glostrup.bim
-    |       |-- Glostrup.fam
-    |       `-- Glostrup.log
-    |-- by_chromosome/
-    |   |-- chr1.vcf.gz
-    |   |-- chr1.vcf.gz.tbi
-    |   `-- ...
+    |   |-- plink/
+    |   |   |-- Glostrup.bed
+    |   |   |-- Glostrup.bim
+    |   |   |-- Glostrup.fam
+    |   |   `-- Glostrup.log
+    |   `-- vcf/
+    |       |-- chr1.vcf.gz
+    |       |-- chr1.vcf.gz.tbi
+    |       |-- chrX.vcf.gz
+    |       |-- chrX.vcf.gz.tbi
+    |       `-- ...
     |-- logs/
     |   |-- concatenate.log
     |   |-- plink_conversion.log
+    |   |-- plink_export.log
+    |   |-- final_samples.log
     |   |-- quick_pcair.log
     |   |-- sample_exclusions.log       (when exclusions are configured)
     |   |-- sample_exclusions.prepare.log
+    |   |-- export_vcf/
+    |   |   |-- chr1.log
+    |   |   `-- ...
     |   |-- intersect/
     |   |   |-- chr1.log
     |   |   `-- ...
@@ -370,13 +385,40 @@ For a super-cohort named `Glostrup`, the workflow produces:
     |   `-- merge/
     |       |-- chr1.log
     |       `-- ...
-    `-- qc/
-        `-- variant_intersection/
-            |-- chr1.tsv
-            `-- ...
+    |-- qc/
+    |   |-- final_samples.txt
+    |   |-- deduplication/               (when enabled)
+    |   |   |-- sample_manifest.tsv
+    |   |   |-- duplicate_pairs.tsv
+    |   |   |-- sample_decisions.tsv
+    |   |   `-- removed_samples.txt
+    |   `-- variant_intersection/
+    |       |-- chr1.tsv
+    |       `-- ...
+    `-- intermediate/                   (temporary processing artifacts)
 ```
 
-Chromosome-level outputs are retained after final concatenation.
+Copy `deliverables/` to deploy the genotype datasets and analysis outputs.
+Chromosome filenames use configured canonical names, including `chrX.vcf.gz`.
+
+`qc/final_samples.txt` is a retained, headerless list of merged sample IDs in
+original merge order, after configured exclusions and optional deduplication.
+This one sample list controls both chromosome VCF export and PLINK subsetting.
+If no samples remain or a duplicate-removal ID is absent from the analysis
+dataset, the workflow fails rather than silently exporting inconsistent samples.
+
+| Output | Sample set | Variant set |
+| --- | --- | --- |
+| `deliverables/vcf/chr*.vcf.gz` | Final retained samples | Exact-intersection variants for that chromosome |
+| `deliverables/plink/` | Same final samples, in the same order | Autosomal biallelic A/C/G/T SNPs |
+| `deliverables/pcair/` | After configured exclusions, before deduplication | Existing analysis inputs and estimates |
+
+Combined VCFs are not retained. The workflow uses temporary merged chromosome
+VCFs, combined BCFs, and analysis PLINK files under `intermediate/`, then removes
+them after successful use. The default workflow targets include all delivered
+chromosome VCFs and indexes, final PLINK files, analysis outputs, the final
+sample list, and applicable QC reports. Files from older runs in the previous
+output layout are not automatically moved or deleted.
 
 ## Execution
 
@@ -439,6 +481,7 @@ workflow/scripts/prepare_sample_exclusions.py
                                              Sample exclusion validator
 workflow/scripts/prepare_sample_manifest.py
                                              Merged sample provenance mapper
+workflow/scripts/prepare_final_samples.py    Final sample list and PLINK keep pairs
 workflow/scripts/export_duplicate_pairs.R   PC-Relate duplicate-pair exporter
 workflow/scripts/select_duplicate_representatives.py
                                              Seeded cohort-prioritized selection

@@ -4,15 +4,15 @@ PCAIR_MODULES = tuple(config["modules"]["quick_pcair"])
 
 rule convert_vcf_to_plink:
     input:
-        vcf=FINAL_VCF,
-        index=f"{FINAL_VCF}.tbi",
+        bcf=ANALYSIS_BCF,
+        index=f"{ANALYSIS_BCF}.csi",
     output:
-        bed=f"{PLINK_PREFIX}.bed",
-        bim=f"{PLINK_PREFIX}.bim",
-        fam=f"{PLINK_PREFIX}.fam",
-        plink_log=f"{PLINK_PREFIX}.log",
+        bed=temp(f"{ANALYSIS_PLINK_PREFIX}.bed"),
+        bim=temp(f"{ANALYSIS_PLINK_PREFIX}.bim"),
+        fam=temp(f"{ANALYSIS_PLINK_PREFIX}.fam"),
+        plink_log=temp(f"{ANALYSIS_PLINK_PREFIX}.log"),
     params:
-        prefix=PLINK_PREFIX,
+        prefix=ANALYSIS_PLINK_PREFIX,
     threads:
         config["resources"]["convert_vcf_to_plink"]["threads"]
     resources:
@@ -24,7 +24,7 @@ rule convert_vcf_to_plink:
     shell:
         """
         plink2 \
-            --vcf {input.vcf:q} \
+            --bcf {input.bcf:q} \
             --vcf-require-gt \
             --double-id \
             --autosome \
@@ -40,9 +40,9 @@ rule convert_vcf_to_plink:
 
 rule run_quick_pcair:
     input:
-        bed=f"{PLINK_PREFIX}.bed",
-        bim=f"{PLINK_PREFIX}.bim",
-        fam=f"{PLINK_PREFIX}.fam",
+        bed=f"{ANALYSIS_PLINK_PREFIX}.bed",
+        bim=f"{ANALYSIS_PLINK_PREFIX}.bim",
+        fam=f"{ANALYSIS_PLINK_PREFIX}.fam",
     output:
         gds=f"{PCAIR_PREFIX}.gds",
         king_plot=f"{PCAIR_PREFIX}.KINGkinship.png",
@@ -55,7 +55,7 @@ rule run_quick_pcair:
         pcrelate_data=f"{PCAIR_PREFIX}.pcrelate.RData",
         pcrelate_plot=f"{PCAIR_PREFIX}.pcrelate_1v2.png",
     params:
-        plink_prefix=PLINK_PREFIX,
+        plink_prefix=ANALYSIS_PLINK_PREFIX,
         output_prefix=PCAIR_PREFIX,
     threads:
         config["resources"]["run_quick_pcair"]["threads"]
@@ -74,6 +74,42 @@ rule run_quick_pcair:
             --plink {params.plink_prefix:q} \
             --output {params.output_prefix:q} \
             --threads {threads} \
+            > {log:q} 2>&1
+        """
+
+
+rule export_final_plink:
+    input:
+        bed=f"{ANALYSIS_PLINK_PREFIX}.bed",
+        bim=f"{ANALYSIS_PLINK_PREFIX}.bim",
+        fam=f"{ANALYSIS_PLINK_PREFIX}.fam",
+        keep=FINAL_PLINK_KEEP,
+    output:
+        bed=f"{PLINK_PREFIX}.bed",
+        bim=f"{PLINK_PREFIX}.bim",
+        fam=f"{PLINK_PREFIX}.fam",
+        plink_log=f"{PLINK_PREFIX}.log",
+    params:
+        input_prefix=ANALYSIS_PLINK_PREFIX,
+        output_prefix=PLINK_PREFIX,
+    threads:
+        config["resources"]["export_final_plink"]["threads"]
+    resources:
+        mem_mb=config["resources"]["export_final_plink"]["mem_mb"]
+    log:
+        str(Path(OUTPUT_DIRECTORY) / "logs" / "plink_export.log")
+    envmodules:
+        *PLINK_MODULES
+    shell:
+        """
+        plink2 \
+            --bfile {params.input_prefix:q} \
+            --keep {input.keep:q} \
+            --indiv-sort file {input.keep:q} \
+            --make-bed \
+            --threads {threads} \
+            --memory {resources.mem_mb} \
+            --out {params.output_prefix:q} \
             > {log:q} 2>&1
         """
 

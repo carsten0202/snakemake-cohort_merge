@@ -3,7 +3,7 @@ if DEDUPLICATION_ENABLED:
         input:
             vcfs=[cohort_vcf(cohort, CHROMOSOMES[0]) for cohort in COHORTS],
             merged=MERGED_VCF_PATTERN.format(chromosome=CHROMOSOMES[0]),
-            final=FINAL_VCF,
+            analysis=ANALYSIS_BCF,
         output:
             manifest=SAMPLE_MANIFEST,
         params:
@@ -58,42 +58,3 @@ if DEDUPLICATION_ENABLED:
             str(Path(OUTPUT_DIRECTORY) / "logs" / "duplicate_selection.log")
         script:
             "../scripts/select_duplicate_representatives.py"
-
-
-    rule deduplicate_vcf:
-        input:
-            vcf=FINAL_VCF,
-            index=f"{FINAL_VCF}.tbi",
-            removals=DUPLICATE_REMOVALS,
-        output:
-            vcf=DEDUPLICATED_VCF,
-            index=f"{DEDUPLICATED_VCF}.tbi",
-        params:
-            workers=lambda wildcards, threads: bcftools_workers(threads),
-        threads:
-            config["resources"]["deduplicate_vcf"]["threads"]
-        resources:
-            mem_mb=config["resources"]["deduplicate_vcf"]["mem_mb"]
-        log:
-            str(Path(OUTPUT_DIRECTORY) / "logs" / "deduplication.log")
-        envmodules:
-            *BCFTOOLS_MODULES
-        shell:
-            """
-            selection=()
-            if [[ -s {input.removals:q} ]]; then
-                selection=(--samples-file ^{input.removals:q})
-            fi
-            bcftools view \
-                "${{selection[@]}}" \
-                --no-update \
-                --output-type z \
-                --write-index=tbi \
-                --threads {params.workers} \
-                --output {output.vcf:q} \
-                {input.vcf:q} \
-                2> {log:q}
-            """
-
-
-    ruleorder: deduplicate_vcf > index_vcf

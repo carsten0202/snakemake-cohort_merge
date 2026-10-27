@@ -108,7 +108,9 @@ properties:
       - prepare_sample_manifest
       - export_duplicate_pairs
       - select_duplicate_representatives
-      - deduplicate_vcf
+      - prepare_final_samples
+      - export_chromosome_vcf
+      - export_final_plink
     properties:
       prepare_sample_manifest:
         $ref: '#/$defs/ruleResources'
@@ -116,7 +118,11 @@ properties:
         $ref: '#/$defs/ruleResources'
       select_duplicate_representatives:
         $ref: '#/$defs/ruleResources'
-      deduplicate_vcf:
+      prepare_final_samples:
+        $ref: '#/$defs/ruleResources'
+      export_chromosome_vcf:
+        $ref: '#/$defs/ruleResources'
+      export_final_plink:
         $ref: '#/$defs/ruleResources'
       index_vcf:
         $ref: '#/$defs/ruleResources'
