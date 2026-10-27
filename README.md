@@ -164,6 +164,88 @@ from all cohort exclusion files and removes them once after chromosome
 concatenation. General duplicate-ID support remains enabled, but an ID selected
 for exclusion must be unique to its configured cohort.
 
+### Cohort-prioritized deduplication
+
+Optionally retain one representative from each duplicate/monozygotic-twin group
+after PC-Relate. Enable the stage and assign a unique positive integer priority
+to every cohort; **lower numbers take precedence**:
+
+```yaml
+deduplication:
+  enabled: true
+  minimum_kinship: 0.354
+  random_seed: 42
+
+cohorts:
+  cohort_a:
+    directory: /path/to/cohort_a
+    priority: 1
+  cohort_b:
+    directory: /path/to/cohort_b
+    priority: 2
+```
+
+Deduplication defaults to disabled. When enabled, missing or repeated cohort
+priorities are rejected. Priority does not alter YAML merge order or sample-ID
+prefixes. The example super-cohort configuration enables this stage.
+
+The workflow extracts sample lists from each cohort's first configured
+chromosome and maps them, in merge order, to the actual chromosome-level merged
+header. It validates original IDs and bcftools-generated prefixes, then retains
+only samples still present after the existing configured exclusions. Unmapped
+or inconsistent sample headers cause an error.
+
+Qualifying pairs are exported directly from `mypcrelate$kinBtwn` in the
+PC-Relate RData file, independently of `relatedness.minimum_kinship`. Only
+finite PC-Relate estimates at or above `deduplication.minimum_kinship` create
+connections; KING estimates do not determine removal. Missing and non-finite
+PC-Relate estimates do not create connections.
+
+Each connected component is one duplicate/twin group. For example, A--B and
+B--C form one group even if A--C is below the threshold or absent. The report
+flags groups that are not fully pairwise connected. This intentionally retains
+exactly one representative per connected group, rather than one per qualifying
+pair. Samples outside duplicate groups are retained.
+
+Within each group, the workflow first selects the highest-priority cohort.
+If multiple members belong to that cohort, it chooses one using the configured
+random seed. Groups and candidates are sorted before selection, making results
+reproducible for the same inputs and seed regardless of PC-Relate row order.
+Changing the seed or group membership may change the representative.
+
+Enabling the stage adds these default workflow targets:
+
+```text
+<output_directory>/<super_cohort>/
+    <super_cohort>.deduplicated.vcf.gz
+    <super_cohort>.deduplicated.vcf.gz.tbi
+    qc/deduplication/
+        sample_manifest.tsv
+        duplicate_pairs.tsv
+        sample_decisions.tsv
+        removed_samples.txt
+```
+
+- `sample_manifest.tsv`: merged sample ID, original sample ID, cohort, priority;
+  includes all samples present before deduplication.
+- `duplicate_pairs.tsv`: qualifying sample pairs and their PC-Relate kinship.
+- `sample_decisions.tsv`: one row per duplicate-group member, with group ID,
+  sample IDs, cohort, priority, keep/remove decision, retained representative,
+  selection reason, and `fully_pairwise_connected` flag.
+- `removed_samples.txt`: headerless list of merged sample IDs removed from the VCF.
+
+When there are no qualifying pairs, the pair and decision reports contain only
+headers, the removal list is empty, and all samples are retained. Filtering
+preserves variants and the retained samples' genotype calls. The original VCF
+and analysis outputs are retained; PCs and kinship describe the sample set
+before deduplication and are not recalculated automatically.
+
+Stage logs are `logs/sample_manifest.log`, `logs/duplicate_pairs.log`,
+`logs/duplicate_selection.log`, and `logs/deduplication.log`. Resources can be
+overridden through `resources.prepare_sample_manifest`,
+`resources.export_duplicate_pairs`, `resources.select_duplicate_representatives`,
+and `resources.deduplicate_vcf`.
+
 ## Retained VCF fields
 
 The chromosome and final VCFs retain variant coordinates, IDs, alleles, quality,
@@ -351,9 +433,15 @@ tests/integration/test_workflow.py          Synthetic integration tests
 workflow/Snakefile                          Workflow entry point
 workflow/rules/bcftools.smk                 BCFtools workflow rules
 workflow/rules/pcair.smk                    PLINK and quick-pcair rules
+workflow/rules/deduplication.smk            Cohort-prioritized deduplication rules
 workflow/schemas/config.schema.yaml         Configuration schema
 workflow/scripts/prepare_sample_exclusions.py
-                                            Sample exclusion validator
+                                             Sample exclusion validator
+workflow/scripts/prepare_sample_manifest.py
+                                             Merged sample provenance mapper
+workflow/scripts/export_duplicate_pairs.R   PC-Relate duplicate-pair exporter
+workflow/scripts/select_duplicate_representatives.py
+                                             Seeded cohort-prioritized selection
 workflow/scripts/summarize_variant_intersection.py
                                             Intersection QC reporter
 requirements-dev.txt                        Local development dependencies

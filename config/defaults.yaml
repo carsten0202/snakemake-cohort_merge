@@ -44,7 +44,28 @@ modules:
 relatedness:
   minimum_kinship: 0.0442
 
+deduplication:
+  enabled: false
+  minimum_kinship: 0.354
+  random_seed: 42
+
 resources:
+  prepare_sample_manifest:
+    threads: 1
+    mem_mb: 8000
+
+  export_duplicate_pairs:
+    threads: 1
+    mem_mb: 64000
+
+  select_duplicate_representatives:
+    threads: 1
+    mem_mb: 8000
+
+  deduplicate_vcf:
+    threads: 4
+    mem_mb: 32000
+
   index_vcf:
     threads: 2
     mem_mb: 8000

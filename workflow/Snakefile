@@ -17,6 +17,14 @@ EXCLUSION_COHORTS = [
     if "exclude_samples" in config["cohorts"][cohort]
 ]
 HAS_SAMPLE_EXCLUSIONS = bool(EXCLUSION_COHORTS)
+DEDUPLICATION_ENABLED = config["deduplication"]["enabled"]
+if DEDUPLICATION_ENABLED:
+    priorities = [config["cohorts"][cohort].get("priority") for cohort in COHORTS]
+    if any(priority is None for priority in priorities):
+        raise WorkflowError("Deduplication requires a priority for every cohort")
+    if len(set(priorities)) != len(priorities):
+        raise WorkflowError("Deduplication requires unique cohort priorities")
+
 SUPER_COHORT = config["super_cohort"]
 OUTPUT_DIRECTORY = str(Path(config["output_directory"]) / SUPER_COHORT)
 
@@ -26,6 +34,17 @@ ANALYSIS_DIRECTORY = Path(OUTPUT_DIRECTORY) / "analysis"
 PLINK_PREFIX = str(ANALYSIS_DIRECTORY / "plink" / SUPER_COHORT)
 PCAIR_PREFIX = str(ANALYSIS_DIRECTORY / "pcair" / SUPER_COHORT)
 RELATEDNESS_REPORT = f"{PCAIR_PREFIX}.related_pairs.tsv"
+DEDUPLICATED_VCF = str(Path(OUTPUT_DIRECTORY) / f"{SUPER_COHORT}.deduplicated.vcf.gz")
+DEDUPLICATION_DIRECTORY = Path(OUTPUT_DIRECTORY) / "qc" / "deduplication"
+SAMPLE_MANIFEST = str(DEDUPLICATION_DIRECTORY / "sample_manifest.tsv")
+DUPLICATE_PAIRS = str(DEDUPLICATION_DIRECTORY / "duplicate_pairs.tsv")
+SAMPLE_DECISIONS = str(DEDUPLICATION_DIRECTORY / "sample_decisions.tsv")
+DUPLICATE_REMOVALS = str(DEDUPLICATION_DIRECTORY / "removed_samples.txt")
+DEDUPLICATION_OUTPUTS = (
+    [DEDUPLICATED_VCF, f"{DEDUPLICATED_VCF}.tbi", SAMPLE_MANIFEST,
+     DUPLICATE_PAIRS, SAMPLE_DECISIONS, DUPLICATE_REMOVALS]
+    if DEDUPLICATION_ENABLED else []
+)
 
 PLINK_OUTPUTS = [
     f"{PLINK_PREFIX}.bed",
@@ -55,7 +74,9 @@ rule all:
         PLINK_OUTPUTS,
         PCAIR_OUTPUTS,
         RELATEDNESS_REPORT,
+        DEDUPLICATION_OUTPUTS,
 
 
 include: "rules/bcftools.smk"
 include: "rules/pcair.smk"
+include: "rules/deduplication.smk"

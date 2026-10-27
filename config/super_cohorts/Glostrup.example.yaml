@@ -1,12 +1,19 @@
 super_cohort: Glostrup
 output_directory: /path/to/cohort_merge/output
 
+deduplication:
+  enabled: true
+  minimum_kinship: 0.354
+  random_seed: 42
+
 cohorts:
   cohort_a:
     directory: /path/to/cohort_a
+    priority: 1
 
   cohort_b:
     directory: /path/to/cohort_b
+    priority: 2
     pattern: "{chromosome}.filtered.vcf.gz"
     exclude_samples: /path/to/cohort_b/excluded_samples.txt
     chromosome_aliases:

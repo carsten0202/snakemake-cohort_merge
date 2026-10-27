@@ -71,6 +71,25 @@ properties:
         maximum: 0.5
         description: Minimum KING or PC-Relate kinship for reporting a pair.
 
+  deduplication:
+    type: object
+    additionalProperties: false
+    required:
+      - enabled
+      - minimum_kinship
+      - random_seed
+    properties:
+      enabled:
+        type: boolean
+      minimum_kinship:
+        type: number
+        exclusiveMinimum: 0
+        maximum: 0.5
+        description: Minimum PC-Relate kinship for a duplicate/twin connection.
+      random_seed:
+        type: integer
+        minimum: 0
+
   resources:
     type: object
     additionalProperties: false
@@ -86,7 +105,19 @@ properties:
       - convert_vcf_to_plink
       - run_quick_pcair
       - export_relatedness
+      - prepare_sample_manifest
+      - export_duplicate_pairs
+      - select_duplicate_representatives
+      - deduplicate_vcf
     properties:
+      prepare_sample_manifest:
+        $ref: '#/$defs/ruleResources'
+      export_duplicate_pairs:
+        $ref: '#/$defs/ruleResources'
+      select_duplicate_representatives:
+        $ref: '#/$defs/ruleResources'
+      deduplicate_vcf:
+        $ref: '#/$defs/ruleResources'
       index_vcf:
         $ref: '#/$defs/ruleResources'
       intersect_variants:
@@ -162,6 +193,10 @@ $defs:
     required:
       - directory
     properties:
+      priority:
+        type: integer
+        minimum: 1
+        description: Unique cohort priority for deduplication; lower numbers win.
       directory:
         type: string
         minLength: 1

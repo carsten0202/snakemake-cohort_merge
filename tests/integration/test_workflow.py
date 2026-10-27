@@ -1,4 +1,6 @@
+import csv
 import json
+import runpy
 import os
 import shutil
 import subprocess
@@ -6,6 +8,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 
 
 REPOSITORY = Path(__file__).resolve().parents[2]
@@ -231,6 +234,7 @@ def write_fake_analysis_tools(bin_directory, call_log):
     plink2.write_text(
         """#!/usr/bin/env python3
 import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -239,6 +243,11 @@ prefix = Path(args[args.index("--out") + 1])
 prefix.parent.mkdir(parents=True, exist_ok=True)
 for suffix in (".bed", ".bim", ".fam", ".log"):
     Path(f"{prefix}{suffix}").touch()
+samples = subprocess.run(
+    ["bcftools", "query", "--list-samples", args[args.index("--vcf") + 1]],
+    check=True, text=True, capture_output=True,
+).stdout
+Path(f"{prefix}.fam").write_text(samples)
 with open(os.environ["FAKE_TOOL_CALLS"], "a") as handle:
     handle.write("plink2 " + " ".join(args) + "\\n")
 """
@@ -270,13 +279,22 @@ suffixes = (
 )
 for suffix in suffixes:
     Path(f"{prefix}{suffix}").touch()
-Path(f"{prefix}.KINGkinship.tsv").write_text(
+king_lines = (
     " duplicate cohort_a_sample 2:duplicate cohort_b_sample\\n"
     "duplicate 0.5 0.354 0.177 0.0884\\n"
     "cohort_a_sample 0.354 0.5 0.0442 0.02\\n"
     "2:duplicate 0.177 0.0442 0.5 0.01\\n"
     "cohort_b_sample 0.0884 0.02 0.01 0.5\\n"
-)
+).splitlines()
+fam = args[args.index("--plink") + 1] + ".fam"
+samples = Path(fam).read_text().splitlines()
+all_samples = king_lines[0].split()
+indices = [all_samples.index(sample) for sample in samples]
+king_rows = [" " + " ".join(samples)]
+for index in indices:
+    fields = king_lines[index + 1].split()
+    king_rows.append(" ".join([fields[0]] + [fields[i + 1] for i in indices]))
+Path(f"{prefix}.KINGkinship.tsv").write_text("\\n".join(king_rows) + "\\n")
 subprocess.run(
     [
         "Rscript",
@@ -289,9 +307,15 @@ subprocess.run(
             "ID2=c('cohort_a_sample','2:duplicate','cohort_b_sample',"
             "'2:duplicate','cohort_b_sample','cohort_b_sample'),"
             "kin=c(0.36,0.17,0.04,0.03,0.05,0.01))); "
+            "if (nzchar(args[3])) mypcrelate$kinBtwn$kin <- "
+            "as.numeric(strsplit(args[3], ',', fixed=TRUE)[[1]]); "
+            "ids <- readLines(args[2]); "
+            "mypcrelate$kinBtwn <- subset(mypcrelate$kinBtwn, ID1 %in% ids & ID2 %in% ids); "
             "save(mypcrelate, file=args[1])"
         ),
         f"{prefix}.pcrelate.RData",
+        fam,
+        os.environ.get("FAKE_PCRELATE_KINSHIPS", ""),
     ],
     check=True,
 )
@@ -335,6 +359,153 @@ def run_workflow(config, targets=None, env=None):
     "bcftools and Rscript are required for integration tests",
 )
 class WorkflowIntegrationTest(unittest.TestCase):
+    def test_manifest_handles_existing_prefixed_ids(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config, output, source_vcfs = build_test_project(root)
+            data = json.loads(config.read_text())
+            data["deduplication"] = {"enabled": True}
+            for priority, cohort in enumerate(data["cohorts"].values(), 1):
+                cohort["priority"] = priority
+            config.write_text(json.dumps(data))
+            for chromosome, destination in zip(("chr1", "chrX"), source_vcfs[:2]):
+                source = root / "cohort_a" / f"{chromosome}.vcf"
+                source.write_text(source.read_text().replace("cohort_a_sample", "2:duplicate"))
+                compress_vcf(source, destination)
+            qc = output / "qc" / "deduplication"
+            result = run_workflow(config, [qc / "sample_manifest.tsv"])
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            with (qc / "sample_manifest.tsv").open() as handle:
+                rows = list(csv.DictReader(handle, delimiter="\t"))
+            self.assertEqual(
+                [(row["merged_sample_id"], row["original_sample_id"], row["cohort"]) for row in rows],
+                [("duplicate", "duplicate", "cohort_a"),
+                 ("2:duplicate", "2:duplicate", "cohort_a"),
+                 ("2:2:duplicate", "duplicate", "cohort_b"),
+                 ("cohort_b_sample", "cohort_b_sample", "cohort_b")],
+            )
+
+    def test_deduplication(self):
+        scenarios = [
+            # Cohort-a twins: seeded selection, without affecting unrelated samples.
+            ("within_cohort", "0.36,0.17,0.04,0.03,0.05,0.01", (1, 2), None,
+             {"duplicate", "cohort_a_sample"}, 1, True),
+            # Cohort b wins despite appearing second in merge order; exact boundary.
+            ("cross_cohort", "0.353999,0.354,0.04,0.03,0.05,0.01", (2, 1), None,
+             {"duplicate", "2:duplicate"}, 1, True),
+            # A--C--B is one component; choose between the two cohort-a members.
+            ("chain", "0.1,0.354,0.04,0.36,0.05,0.01", (1, 2), None,
+             {"duplicate", "cohort_a_sample", "2:duplicate"}, 2, False),
+            # KING's duplicate classification and non-finite PC-Relate values do not remove samples.
+            ("no_duplicates", "NA,Inf,0.04,NaN,0.05,-Inf", (1, 2), None,
+             set(), 0, True),
+            ("existing_exclusions", "0.1,0.36,0.04,0.03,0.05,0.01", (2, 1),
+             ["cohort_b_sample"], {"duplicate", "2:duplicate"}, 1, True),
+        ]
+        for name, kinships, priorities, exclusions, members, count, connected in scenarios:
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                config, output, _ = build_test_project(root, exclusion_entries=exclusions)
+                data = json.loads(config.read_text())
+                data["deduplication"] = {"enabled": True, "random_seed": 42}
+                # The report cutoff must not hide deduplication candidates.
+                data["relatedness"] = {"minimum_kinship": 0.5}
+                for cohort, priority in zip(data["cohorts"].values(), priorities):
+                    cohort["priority"] = priority
+                config.write_text(json.dumps(data))
+                bin_directory = root / "bin"
+                bin_directory.mkdir()
+                env = write_fake_analysis_tools(bin_directory, root / "calls.log")
+                env["FAKE_PCRELATE_KINSHIPS"] = kinships
+                result = run_workflow(config, env=env)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+                qc = output / "qc" / "deduplication"
+                with (qc / "sample_manifest.tsv").open() as handle:
+                    manifest = list(csv.DictReader(handle, delimiter="\t"))
+                mapping = {row["merged_sample_id"]: row for row in manifest}
+                self.assertEqual(mapping["2:duplicate"]["original_sample_id"], "duplicate")
+                self.assertEqual(mapping["2:duplicate"]["cohort"], "cohort_b")
+                self.assertEqual("cohort_b_sample" in mapping, exclusions is None)
+                with (qc / "sample_decisions.tsv").open() as handle:
+                    decisions = list(csv.DictReader(handle, delimiter="\t"))
+                self.assertEqual({row["merged_sample_id"] for row in decisions}, members)
+                self.assertTrue(all(
+                    row["fully_pairwise_connected"] == str(connected).lower()
+                    for row in decisions
+                ))
+                removals = (qc / "removed_samples.txt").read_text().splitlines()
+                self.assertEqual(len(removals), count)
+                if decisions:
+                    kept = [row for row in decisions if row["decision"] == "keep"]
+                    self.assertEqual(len(kept), 1)
+                    winner = kept[0]
+                    self.assertEqual(int(winner["priority"]), min(
+                        int(row["priority"]) for row in decisions
+                    ))
+                    self.assertTrue(all(
+                        row["retained_representative"] == winner["merged_sample_id"]
+                        for row in decisions
+                    ))
+                    if name in ("cross_cohort", "existing_exclusions"):
+                        self.assertEqual(winner["merged_sample_id"], "2:duplicate")
+                    if name in ("within_cohort", "chain"):
+                        self.assertEqual(winner["selection_reason"], "seeded_random_selection")
+
+                # Repeat selection with reversed input rows: seed and canonical ordering
+                # must preserve both the representative and the decision report.
+                expected_decisions = (qc / "sample_decisions.tsv").read_text()
+                for filename in ("sample_manifest.tsv", "duplicate_pairs.tsv"):
+                    path = qc / filename
+                    lines = path.read_text().splitlines()
+                    path.write_text("\n".join([lines[0], *reversed(lines[1:])]) + "\n")
+                runpy.run_path(str(REPOSITORY / "workflow/scripts/select_duplicate_representatives.py"),
+                    run_name="__main__", init_globals={"snakemake": SimpleNamespace(
+                        input=SimpleNamespace(manifest=qc / "sample_manifest.tsv", pairs=qc / "duplicate_pairs.tsv"),
+                        output=SimpleNamespace(decisions=qc / "sample_decisions.tsv", removals=qc / "removed_samples.txt"),
+                        params=SimpleNamespace(random_seed=42), log=[root / "selection.log"],
+                    )})
+                self.assertEqual((qc / "sample_decisions.tsv").read_text(), expected_decisions)
+
+                original = output / "Glostrup.vcf.gz"
+                filtered = output / "Glostrup.deduplicated.vcf.gz"
+                samples = subprocess.run(
+                    [BCFTOOLS, "query", "--list-samples", str(filtered)],
+                    check=True, text=True, capture_output=True,
+                ).stdout.splitlines()
+                self.assertEqual(samples, [row["merged_sample_id"] for row in manifest
+                                           if row["merged_sample_id"] not in removals])
+                def query(vcf, selection):
+                    return subprocess.run(
+                        [BCFTOOLS, "query", *selection, "--format", "%CHROM\t%POS\t%REF\t%ALT[\t%GT]\n", str(vcf)],
+                        check=True, text=True, capture_output=True,
+                    ).stdout
+                self.assertEqual(query(filtered, []), query(original, ["--samples", ",".join(samples)]))
+                stats = subprocess.run(
+                    [BCFTOOLS, "index", "--stats", str(filtered)],
+                    check=True, text=True, capture_output=True,
+                ).stdout.splitlines()
+                self.assertEqual(stats, ["chr1\t.\t2", "chrX\t.\t1"])
+
+    def test_deduplication_rejects_invalid_priorities(self):
+        for priorities, message in [
+            ((None, 2), "requires a priority for every cohort"),
+            ((1, 1), "requires unique cohort priorities"),
+            ((0, 2), "0 is less than the minimum"),
+            ((True, 2), "not of type 'integer'"),
+        ]:
+            with self.subTest(priorities=priorities), tempfile.TemporaryDirectory() as directory:
+                config, _, _ = build_test_project(Path(directory))
+                data = json.loads(config.read_text())
+                data["deduplication"] = {"enabled": True}
+                for cohort, priority in zip(data["cohorts"].values(), priorities):
+                    if priority is not None:
+                        cohort["priority"] = priority
+                config.write_text(json.dumps(data))
+                result = run_workflow(config)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(message, result.stdout + result.stderr)
+
     def test_complete_workflow(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
             config, output, source_vcfs = build_test_project(
@@ -712,6 +883,8 @@ class WorkflowIntegrationTest(unittest.TestCase):
             )
 
             calls = call_log.read_text().splitlines()
+            self.assertFalse((output / "Glostrup.deduplicated.vcf.gz").exists())
+            self.assertFalse((output / "qc" / "deduplication").exists())
             self.assertEqual(len(calls), 2)
             self.assertIn("--vcf-require-gt", calls[0])
             self.assertIn("--double-id", calls[0])
