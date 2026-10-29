@@ -243,10 +243,11 @@ prefix = Path(args[args.index("--out") + 1])
 prefix.parent.mkdir(parents=True, exist_ok=True)
 for suffix in (".bed", ".bim", ".log"):
     Path(f"{prefix}{suffix}").touch()
-if "--bcf" in args:
+assert "--bcf" not in args
+if "--vcf" in args:
     assert "--double-id" in args and "--vcf-require-gt" in args
     samples = subprocess.run(
-        ["bcftools", "query", "--list-samples", args[args.index("--bcf") + 1]],
+        ["bcftools", "query", "--list-samples", args[args.index("--vcf") + 1]],
         check=True, text=True, capture_output=True,
     ).stdout.splitlines()
     families = [[sample, sample, "0", "0", "0", "-9"] for sample in samples]
@@ -858,7 +859,7 @@ class WorkflowIntegrationTest(unittest.TestCase):
                     output
                     / "intermediate"
                     / "unfiltered"
-                    / "Glostrup.bcf"
+                    / "Glostrup.vcf.gz"
                 ).exists()
             )
 
@@ -974,10 +975,11 @@ class WorkflowIntegrationTest(unittest.TestCase):
             self.assertFalse((output / "Glostrup.deduplicated.vcf.gz").exists())
             self.assertFalse((output / "qc" / "deduplication").exists())
             self.assertEqual(len(calls), 3)
-            conversion = next(call for call in calls if "--bcf" in call)
+            conversion = next(call for call in calls if "--vcf " in call)
             analysis = next(call for call in calls if call.startswith("quick-pcair"))
             export = next(call for call in calls if "--bfile" in call)
             self.assertIn("--vcf-require-gt", conversion)
+            self.assertIn(f"--vcf {output / 'intermediate' / 'analysis' / 'Glostrup.vcf.gz'}", conversion)
             self.assertIn("--double-id", conversion)
             self.assertIn("--autosome", conversion)
             self.assertIn("--snps-only just-acgt", conversion)

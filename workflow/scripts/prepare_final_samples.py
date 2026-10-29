@@ -10,7 +10,7 @@ result = subprocess.run(
 )
 analysis_samples = result.stdout.splitlines()
 if len(analysis_samples) != len(set(analysis_samples)):
-    raise ValueError("Analysis BCF contains duplicate sample IDs")
+    raise ValueError("Analysis VCF contains duplicate sample IDs")
 
 removals = set()
 for filename in snakemake.input.removals:

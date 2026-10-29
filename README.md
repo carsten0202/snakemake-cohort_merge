@@ -263,7 +263,7 @@ only biallelic A/C/G/T SNPs.
 
 ## Population structure analysis
 
-PLINK 2 converts a temporary combined BCF to analysis BED/BIM/FAM files before
+PLINK 2 converts a temporary combined `.vcf.gz` to analysis BED/BIM/FAM files before
 quick-pcair is run. Conversion retains autosomal, biallelic A/C/G/T SNPs and requires the
 `GT` field. Dosage fields such as `DS` and `GP` are not imported, and PLINK does
 not derive new hard calls from them. This is intentional because PLINK BED and
@@ -278,7 +278,7 @@ After sample selection, PLINK 2 subsets the analysis dataset using explicit
 FID/IID pairs and writes the final dataset to `deliverables/plink/`. Its sample
 IDs and order match every delivered chromosome VCF. Its variants remain the
 autosomal, biallelic SNP subset, while VCFs include all configured chromosomes
-and retained variant types. The analysis PLINK dataset and combined BCF are
+and retained variant types. The analysis PLINK dataset and combined VCF are
 temporary and are removed after their consumers finish successfully.
 
 quick-pcair performs its own LD pruning with SNPRelate. Version 1.1.0 uses a
@@ -414,11 +414,24 @@ dataset, the workflow fails rather than silently exporting inconsistent samples.
 | `deliverables/pcair/` | After configured exclusions, before deduplication | Existing analysis inputs and estimates |
 
 Combined VCFs are not retained. The workflow uses temporary merged chromosome
-VCFs, combined BCFs, and analysis PLINK files under `intermediate/`, then removes
+VCFs, combined compressed VCFs, and analysis PLINK files under `intermediate/`, then removes
 them after successful use. The default workflow targets include all delivered
 chromosome VCFs and indexes, final PLINK files, analysis outputs, the final
 sample list, and applicable QC reports. Files from older runs in the previous
 output layout are not automatically moved or deleted.
+
+The combined analysis input is `intermediate/analysis/<super_cohort>.vcf.gz`
+with a `.tbi` index. Concatenation writes compressed VCF directly; when configured
+exclusions are present, the exclusion step also writes compressed VCF. PLINK
+reads this regular on-disk file with `--vcf`, avoiding BCF rewind failures seen
+with older PLINK builds. No separate BCF-to-VCF conversion job is needed.
+All temporary genotype files stay beneath the configured output directory;
+no node-local scratch is used by these rules.
+
+To reuse a manually converted analysis VCF, place it and its `.tbi` at the paths
+above and inspect a Snakemake dry run before resuming. Existing files may still
+be scheduled for regeneration due to timestamps, incomplete-job metadata, or
+changed rule provenance; their presence alone does not guarantee reuse.
 
 ## Execution
 

@@ -33,13 +33,13 @@ SAMPLE_EXCLUSION_LIST = str(
     Path(OUTPUT_DIRECTORY) / "intermediate" / "sample_exclusions.txt"
 )
 
-UNFILTERED_BCF = str(
+UNFILTERED_VCF = str(
     Path(OUTPUT_DIRECTORY)
     / "intermediate"
     / "unfiltered"
-    / f"{SUPER_COHORT}.bcf"
+    / f"{SUPER_COHORT}.vcf.gz"
 )
-CONCATENATED_BCF = UNFILTERED_BCF if HAS_SAMPLE_EXCLUSIONS else ANALYSIS_BCF
+CONCATENATED_VCF = UNFILTERED_VCF if HAS_SAMPLE_EXCLUSIONS else ANALYSIS_VCF
 
 
 def cohort_vcf(cohort, chromosome):
@@ -264,12 +264,12 @@ if HAS_SAMPLE_EXCLUSIONS:
 
     rule exclude_samples:
         input:
-            bcf=UNFILTERED_BCF,
-            index=f"{UNFILTERED_BCF}.csi",
+            vcf=UNFILTERED_VCF,
+            index=f"{UNFILTERED_VCF}.tbi",
             samples=SAMPLE_EXCLUSION_LIST,
         output:
-            bcf=temp(ANALYSIS_BCF),
-            index=temp(f"{ANALYSIS_BCF}.csi"),
+            vcf=temp(ANALYSIS_VCF),
+            index=temp(f"{ANALYSIS_VCF}.tbi"),
         params:
             workers=lambda wildcards, threads: bcftools_workers(threads)
         threads:
@@ -287,19 +287,19 @@ if HAS_SAMPLE_EXCLUSIONS:
                     --force-samples \
                     --samples-file ^{input.samples:q} \
                     --no-update \
-                    --output-type b \
-                    --write-index=csi \
+                    --output-type z \
+                    --write-index=tbi \
                     --threads {params.workers} \
-                    --output {output.bcf:q} \
-                    {input.bcf:q} \
+                    --output {output.vcf:q} \
+                    {input.vcf:q} \
                     2> {log:q}
             else
                 bcftools view \
-                    --output-type b \
-                    --write-index=csi \
+                    --output-type z \
+                    --write-index=tbi \
                     --threads {params.workers} \
-                    --output {output.bcf:q} \
-                    {input.bcf:q} \
+                    --output {output.vcf:q} \
+                    {input.vcf:q} \
                     2> {log:q}
             fi
             """
@@ -310,8 +310,8 @@ rule concatenate_chromosomes:
         vcfs=expand(MERGED_VCF_PATTERN, chromosome=CHROMOSOMES),
         indexes=expand(f"{MERGED_VCF_PATTERN}.tbi", chromosome=CHROMOSOMES),
     output:
-        bcf=temp(CONCATENATED_BCF),
-        index=temp(f"{CONCATENATED_BCF}.csi"),
+        vcf=temp(CONCATENATED_VCF),
+        index=temp(f"{CONCATENATED_VCF}.tbi"),
     params:
         workers=lambda wildcards, threads: bcftools_workers(threads)
     threads:
@@ -325,10 +325,10 @@ rule concatenate_chromosomes:
     shell:
         """
         bcftools concat \
-            --output-type b \
-            --write-index=csi \
+            --output-type z \
+            --write-index=tbi \
             --threads {params.workers} \
-            --output {output.bcf:q} \
+            --output {output.vcf:q} \
             {input.vcfs:q} \
             2> {log:q}
         """
@@ -336,7 +336,7 @@ rule concatenate_chromosomes:
 
 rule prepare_final_samples:
     input:
-        analysis=ANALYSIS_BCF,
+        analysis=ANALYSIS_VCF,
         removals=[DUPLICATE_REMOVALS] if DEDUPLICATION_ENABLED else [],
     output:
         samples=FINAL_SAMPLE_LIST,
@@ -386,3 +386,6 @@ rule export_chromosome_vcf:
 
 
 ruleorder: export_chromosome_vcf > index_vcf
+ruleorder: concatenate_chromosomes > index_vcf
+if HAS_SAMPLE_EXCLUSIONS:
+    ruleorder: exclude_samples > index_vcf

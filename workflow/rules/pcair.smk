@@ -4,8 +4,8 @@ PCAIR_MODULES = tuple(config["modules"]["quick_pcair"])
 
 rule convert_vcf_to_plink:
     input:
-        bcf=ANALYSIS_BCF,
-        index=f"{ANALYSIS_BCF}.csi",
+        vcf=ANALYSIS_VCF,
+        index=f"{ANALYSIS_VCF}.tbi",
     output:
         bed=temp(f"{ANALYSIS_PLINK_PREFIX}.bed"),
         bim=temp(f"{ANALYSIS_PLINK_PREFIX}.bim"),
@@ -24,7 +24,7 @@ rule convert_vcf_to_plink:
     shell:
         """
         plink2 \
-            --bcf {input.bcf:q} \
+            --vcf {input.vcf:q} \
             --vcf-require-gt \
             --double-id \
             --autosome \

@@ -3,7 +3,7 @@ if DEDUPLICATION_ENABLED:
         input:
             vcfs=[cohort_vcf(cohort, CHROMOSOMES[0]) for cohort in COHORTS],
             merged=MERGED_VCF_PATTERN.format(chromosome=CHROMOSOMES[0]),
-            analysis=ANALYSIS_BCF,
+            analysis=ANALYSIS_VCF,
         output:
             manifest=SAMPLE_MANIFEST,
         params:
